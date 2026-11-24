@@ -280,7 +280,7 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 		logStats();
 
 		try {
-			if (mAppPrefs.getBoolean("loadTunModule", false)) {
+			if (!mRootMode && mAppPrefs.getBoolean("loadTunModule", false)) {
 				if (Build.VERSION.SDK_INT >= 26) {
 					log("TUN: " + RootAccess.ensureTun(mContext));
 				} else {
@@ -741,8 +741,8 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 						mAppPrefs.getString(RootTunnel.TARGETS, RootTunnel.DEFAULT_TARGET));
 				log("ROOT: selected Wi-Fi " + mRootUplink.interfaceName
 						+ " before authentication");
-				RootAccess.check(mContext);
-				log("ROOT: UID 0 and TUN creation verified");
+				// Root mode always verifies TUN, independent of the legacy switch.
+				log("ROOT: " + RootAccess.ensureTun(mContext));
 			} catch (IOException | RuntimeException e) {
 				log("ROOT: " + e.getMessage());
 				if (!mRequestDisconnect) errorAlert(e.getMessage());

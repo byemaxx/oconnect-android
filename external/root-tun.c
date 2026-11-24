@@ -99,6 +99,41 @@ static int number(const char *s, long min, long max, long *out) {
     return 0;
 }
 
+static int missing_tun_error(int error) {
+    return error == ENOENT || error == ENODEV || error == ENXIO;
+}
+
+/* Both names are used on Android. Preserve a real permission or device
+ * error rather than masking it with ENOENT from the second path. */
+static int open_tun(void) {
+    int fd = open("/dev/tun", O_RDWR | O_CLOEXEC);
+    if (fd >= 0) return fd;
+    int first_error = errno;
+    fd = open("/dev/net/tun", O_RDWR | O_CLOEXEC);
+    if (fd < 0 && !missing_tun_error(first_error)) errno = first_error;
+    return fd;
+}
+
+/* A registered misc device proves the kernel driver is present, whether
+ * built in (CONFIG_TUN=y) or supplied by an already loaded module.
+ * Return -1 when the registration state cannot be determined. */
+static int tun_registered(void) {
+    FILE *file = fopen("/proc/misc", "r");
+    if (!file) return -1;
+    char line[256], name[128];
+    int minor, found = 0;
+    while (fgets(line, sizeof(line), file)) {
+        if (sscanf(line, "%d %127s", &minor, name) == 2
+                && minor == 200 && strcmp(name, "tun") == 0) {
+            found = 1;
+            break;
+        }
+    }
+    if (ferror(file)) found = -1;
+    fclose(file);
+    return found;
+}
+
 /* Check the same privileged TUN operation used by the connection.
  * No addresses, routes, NAT rules or persistent interface are installed.
  */
@@ -107,13 +142,22 @@ static int probe(void) {
         fprintf(stderr, "su did not grant UID 0\n");
         return 10;
     }
-    int tun = open("/dev/tun", O_RDWR | O_CLOEXEC);
-    if (tun < 0) tun = open("/dev/net/tun", O_RDWR | O_CLOEXEC);
+    int tun = open_tun();
     if (tun < 0) {
         int error = errno;
-        perror("UID 0 granted, but cannot open TUN device");
-        /* Do not treat a permission or SELinux denial as a missing driver. */
-        return (error == ENOENT || error == ENODEV || error == ENXIO) ? 11 : 13;
+        fprintf(stderr, "UID 0 granted, but cannot open /dev/tun or /dev/net/tun: %s\n",
+                strerror(error));
+        if (!missing_tun_error(error)) return 13;
+        int registered = tun_registered();
+        if (registered == 1) {
+            fprintf(stderr, "TUN driver already registered; check device nodes and SELinux. Module loading skipped.\n");
+            return 14;
+        }
+        if (registered < 0) {
+            fprintf(stderr, "Cannot verify /proc/misc; module loading skipped.\n");
+            return 15;
+        }
+        return 11;
     }
     struct ifreq ifr = {0};
     ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
@@ -143,7 +187,8 @@ static int ensure_tun(void) {
         "/vendor/lib/modules/tun.ko",
         "/vendor_dlkm/lib/modules/tun.ko",
         "/system_dlkm/lib/modules/tun.ko",
-        "/odm/lib/modules/tun.ko"
+        "/odm/lib/modules/tun.ko",
+        "/odm_dlkm/lib/modules/tun.ko"
     };
     for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
         if (access(paths[i], R_OK) != 0) continue;
@@ -154,7 +199,7 @@ static int ensure_tun(void) {
         }
         /* A concurrent loader may already have made TUN available. */
         status = probe();
-        if (status == 0 || status != 11) return status;
+        if (status != 11) return status;
     }
     fprintf(stderr, "TUN unavailable; no compatible device-provided module could be loaded\n");
     return 11;
@@ -233,8 +278,7 @@ int main(int argc, char **argv) {
     close(listener);
     listener = -1;
 
-    tun = open("/dev/tun", O_RDWR | O_CLOEXEC);
-    if (tun < 0) tun = open("/dev/net/tun", O_RDWR | O_CLOEXEC);
+    tun = open_tun();
     if (tun < 0) { perror("open TUN"); goto done; }
     struct ifreq ifr = {0};
     ifr.ifr_flags = IFF_TUN | IFF_NO_PI;

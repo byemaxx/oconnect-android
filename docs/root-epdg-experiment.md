@@ -8,7 +8,7 @@ This opt-in mode preserves the existing OpenConnect authentication/UI, but does 
 2. Install the debug APK; it has the upstream application ID and a different signing key, so it cannot replace an upstream release in place. Back up/export profiles before uninstalling or use a test device.
 3. Disable any other VPN, proxy, and previous IKE routing modules. Connect to Wi-Fi (airplane mode with Wi-Fi enabled is recommended).
 4. In Advanced Settings, enable **Root ePDG mode (experimental)** and set the target domain or known-good IPv4 addresses from a successful control test.
-5. Tap **Test root access** to verify UID 0 and temporary TUN creation. The test does not add routes or NAT rules. Connect normally and grant root permission; root is checked again before authentication. Authentication and MFA are unchanged.
+5. Tap **Test root access** to verify UID 0 and temporary TUN creation. The test does not add routes or NAT rules. Connect normally and grant root permission; root is checked again before authentication. Root ePDG mode automatically ensures TUN support even if the optional switch is off. Authentication and MFA are unchanged.
 6. Confirm no Android VPN NetworkAgent was established with `dumpsys connectivity`; check `ip -br addr`, `ip -4 rule show`, and `logcat -s OConnectRoot`. Retry IMS registration.
 7. Disconnect and check that the helper's routing and SNAT rules are removed. Disable root mode and reconnect to restore normal behavior.
 
@@ -18,7 +18,7 @@ Build using `git submodule update --init --recursive`, `make -C external install
 
 ## TUN compatibility option
 
-On Android 8+, **Ensure TUN support** (formerly Load tun module) is always selectable. When enabled, it first checks whether UID 0 can create a temporary TUN interface. If successful, it skips module loading, including kernels with CONFIG_TUN=y. If the TUN device is absent, it tries only an existing OS-provided tun.ko at a known system/vendor module path and verifies TUN afterward. Permission errors do not trigger module loading. No foreign kernel module is bundled or forced into the running kernel. The option is independent of Root ePDG mode and is optional on devices that already support TUN.
+On Android 8+, **Ensure TUN support** (formerly Load tun module) is always selectable. When enabled, it first checks whether UID 0 can create a temporary TUN interface. If successful, it skips module loading, including kernels with CONFIG_TUN=y. If neither TUN device node is usable and `/proc/misc` confirms that TUN is not registered, it tries only an existing OS-provided tun.ko at a known system/vendor module path and verifies TUN afterward. Permission errors, an already registered driver with missing device nodes, and an unreadable registration state do not trigger module loading. No foreign kernel module is bundled or forced into the running kernel. Root ePDG mode automatically runs the same check before authentication, irrespective of this switch; the switch only controls the optional preflight for ordinary VPN mode.
 
 ## Wi-Fi preflight
 
