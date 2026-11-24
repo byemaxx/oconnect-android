@@ -45,6 +45,10 @@ public class OnBootReceiver extends BroadcastReceiver {
 
 		if(Intent.ACTION_BOOT_COMPLETED.equals(action)) {
 			VpnProfile bootProfile = ProfileManager.getOnBootProfile();
+			if (bootProfile != null && bootProfile.mPrefs.getBoolean("root_epdg_mode", false)) {
+				Log.i(TAG, "Experimental root ePDG mode requires manual connection");
+				return;
+			}
 			if(bootProfile != null) {
 				Log.i(TAG, "starting profile '" + bootProfile.getName() + "' on boot");
 				launchVPN(bootProfile, context);

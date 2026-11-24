@@ -87,7 +87,8 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 	private boolean mAuthDone = false;
 
 	private boolean mRequestPause;
-	private boolean mRequestDisconnect;
+	private volatile boolean mRequestDisconnect;
+	private final boolean mRootEpDG;
 	private Object mMainloopLock = new Object();
 
     public OpenConnectManagementThread(Context context, VpnProfile profile, OpenVpnService openVpnService) {
@@ -95,6 +96,7 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 		mProfile = profile;
 		mOpenVPNService = openVpnService;
 		mPrefs = mProfile.mPrefs;
+		mRootEpDG = mPrefs.getBoolean(RootEpDG.ENABLED, false);
 		mAppPrefs = PreferenceManager.getDefaultSharedPreferences(mContext);
 	}
 
@@ -259,8 +261,16 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 		}
 
 		public void onProtectSocket(int fd) {
+			if (mRootEpDG) return; // Only the explicit ePDG destination is routed.
 			if (mOpenVPNService.protect(fd) != true) {
 				log("Error protecting fd " + fd);
+			}
+		}
+
+		public void onReconnected() {
+			if (mRootEpDG) {
+				log("ROOT: transport reconnected; reconnect manually to renegotiate routes");
+				cancel();
 			}
 		}
 
@@ -284,18 +294,19 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 			log("error running root commands: " + e.getLocalizedMessage());
 		}
 
-		if (!runVPN()) {
-			log("VPN terminated with errors");
+		try {
+			if (!runVPN()) log("VPN terminated with errors");
+		} catch (RuntimeException e) {
+			log("Connection failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+		} finally {
+			setState(STATE_DISCONNECTED);
+			synchronized (mMainloopLock) {
+				if (mOC != null) mOC.destroy();
+				mOC = null;
+			}
+			UserDialog.clearDeferredPrefs();
+			mOpenVPNService.threadDone(this);
 		}
-		setState(STATE_DISCONNECTED);
-
-		synchronized (mMainloopLock) {
-			mOC.destroy();
-			mOC = null;
-		}
-		UserDialog.clearDeferredPrefs();
-
-		mOpenVPNService.threadDone(this);
 	}
 
 	private synchronized void setState(int state) {
@@ -710,6 +721,21 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 			mOC = new AndroidOC();
 		}
 
+		if (mRootEpDG) {
+			try {
+				RootEpDG.requireWifi(mContext);
+				RootRoutePolicy.target(getStringPref(RootEpDG.TARGET));
+				String splitMode = getStringPref("split_tunnel_mode");
+				if (!splitMode.isEmpty() && !splitMode.equals("auto")) {
+					throw new IllegalArgumentException("Root ePDG mode requires automatic server routes");
+				}
+			} catch (IllegalArgumentException e) {
+				log("ROOT: " + e.getMessage());
+				errorAlert(e.getMessage());
+				return false;
+			}
+		}
+
 		if (setPreferences() == false) {
 			return false;
 		}
@@ -746,53 +772,60 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 			return false;
 		}
 
-		VpnService.Builder b = mOpenVPNService.getVpnServiceBuilder();
-		setIPInfo(b);
-
-		ParcelFileDescriptor pfd;
+		ParcelFileDescriptor pfd = null;
+		RootEpDG rootTunnel = null;
 		try {
-			pfd = b.establish();
-		} catch (Exception e) {
-			log("Exception during establish(): " + e.getLocalizedMessage());
-			return false;
-		}
-
-		if (pfd == null || mOC.setupTunFD(pfd.getFd()) != 0) {
-			log("Error setting up tunnel fd");
-			errorAlert();
-			return false;
-		}
-		setState(STATE_CONNECTED);
-		updateStatPref("connect");
-
-		mOC.setupDTLS(60);
-
-		while (true) {
-			if (mOC.mainloop(300, LibOpenConnect.RECONNECT_INTERVAL_MIN) < 0) {
-				break;
+			if (mRequestDisconnect) return false;
+			int fd;
+			if (mRootEpDG) {
+				LibOpenConnect.IPInfo ip = mOC.getIPInfo();
+				rootTunnel = RootEpDG.open(mContext, ip, getStringPref(RootEpDG.TARGET));
+				mOpenVPNService.setIPInfo(this, ip, mOC.getHostname());
+				fd = rootTunnel.fd();
+				log("ROOT: ePDG-only TUN ready (no Android VPN NetworkAgent)");
+			} else {
+				VpnService.Builder b = mOpenVPNService.getVpnServiceBuilder();
+				setIPInfo(b);
+				pfd = b.establish();
+				if (pfd == null) throw new IOException("VPN establishment returned no descriptor");
+				fd = pfd.getFd();
 			}
-			synchronized (mMainloopLock) {
-				if (mRequestDisconnect) {
-					// let the library send the BYE packet and wrap up
-					continue;
-				}
-				while (mRequestPause) {
-					try {
-						mMainloopLock.wait();
-					} catch (InterruptedException e) {
+			if (mRequestDisconnect) return false;
+			if (mOC.setupTunFD(fd) != 0) {
+				log("Error setting up tunnel fd");
+				errorAlert();
+				return false;
+			}
+			setState(STATE_CONNECTED);
+			updateStatPref("connect");
+			mOC.setupDTLS(60);
+
+			while (true) {
+				if (mOC.mainloop(300, LibOpenConnect.RECONNECT_INTERVAL_MIN) < 0) break;
+				synchronized (mMainloopLock) {
+					if (mRequestDisconnect) continue;
+					while (mRequestPause) {
+						try { mMainloopLock.wait(); } catch (InterruptedException ignored) {}
 					}
 				}
 			}
+			return true;
+		} catch (Exception e) {
+			log("Tunnel setup failed: " + e.getMessage());
+			if (!mRequestDisconnect) errorAlert(e.getMessage() == null ? "Tunnel setup failed" : e.getMessage());
+			return false;
+		} finally {
+			if (rootTunnel != null) rootTunnel.close();
+			if (pfd != null) try { pfd.close(); } catch (IOException ignored) {}
 		}
+	}
 
-		try {
-			pfd.close();
-		} catch (IOException e) {
-		}
-		return true;
+	public boolean isRootEpDGMode() {
+		return mRootEpDG;
 	}
 
 	public void reconnect() {
+		if (mRootEpDG) { stopVPN(); return; }
 		log("RECONNECT");
 		// if mRequestPause is false, this will drop the connection and immediately
 		// restart the mainloop

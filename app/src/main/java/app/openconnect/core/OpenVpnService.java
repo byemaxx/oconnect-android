@@ -471,7 +471,8 @@ public class OpenVpnService extends VpnService {
 
 				if (mConnectionState == OpenConnectManagementThread.STATE_CONNECTED &&
 						mKeepAlive == null) {
-					registerKeepAlive();
+					// Root ePDG mode intentionally does not route general DNS traffic.
+					if (mVPN != null && !mVPN.isRootEpDGMode()) registerKeepAlive();
 					FeedbackFragment.recordUse(getApplicationContext(), true);
 				}
 			}

@@ -63,4 +63,22 @@
             android:inputType="number"
             android:defaultValue="" />
     </PreferenceCategory>
+    <PreferenceCategory
+        android:layout="@layout/preference_category_header"
+        android:title="@string/root_epdg_category">
+        <SwitchPreference
+            android:key="root_epdg_mode"
+            android:title="@string/root_epdg_title"
+            android:summary="@string/root_epdg_summary"
+            android:layout="@layout/preference_standard_compact"
+            android:defaultValue="false" />
+        <EditTextPreference
+            android:key="root_epdg_ipv4"
+            android:title="@string/root_epdg_target"
+            android:dialogMessage="@string/root_epdg_target_message"
+            android:dependency="root_epdg_mode"
+            android:inputType="textUri|textNoSuggestions"
+            android:layout="@layout/preference_standard_compact"
+            android:defaultValue="" />
+    </PreferenceCategory>
 </PreferenceScreen>

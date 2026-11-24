@@ -168,3 +168,7 @@ This project is a maintained fork of the original OpenConnect for Android
 codebase. Much of the Java code was derived from OpenVPN for Android by Arne
 Schwabe. The app also includes OpenConnect, GnuTLS, GMP, Nettle, Libxml2, OATH
 Toolkit, stoken, LibTomCrypt, and cURL components.
+
+## Experimental Root ePDG mode (fork)
+
+See [docs/root-epdg.md](docs/root-epdg.md) for the opt-in root-only IPv4 ePDG tunnel, build steps, limitations and diagnostics.

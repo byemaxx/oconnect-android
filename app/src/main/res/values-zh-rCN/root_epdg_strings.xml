@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="root_epdg_category">实验性 Root 网络</string>
+    <string name="root_epdg_title">ROOT ePDG 专用模式（实验性）</string>
+    <string name="root_epdg_summary">需要 Root。不建立 Android 系统 VPN 隧道；仅将指定 IPv4 地址的 UDP 500/4500 经隧道转发。普通应用流量不受 VPN 保护。仅用于有权限使用的 VPN。</string>
+    <string name="root_epdg_target">ePDG IPv4 地址</string>
+    <string name="root_epdg_target_message">输入已经确认的运营商 ePDG 公网 IPv4 地址。不会修改 DNS，仅支持服务器自动路由模式。</string>
+</resources>

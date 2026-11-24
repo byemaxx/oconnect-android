@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="root_epdg_category">Experimental root networking</string>
+    <string name="root_epdg_title">ROOT ePDG only (experimental)</string>
+    <string name="root_epdg_summary">Requires root. No Android VPN tunnel; routes only UDP 500/4500 to the configured IPv4 address. Normal apps are not protected. Use only with an authorized VPN.</string>
+    <string name="root_epdg_target">ePDG IPv4 address</string>
+    <string name="root_epdg_target_message">Enter the verified public IPv4 address of your carrier ePDG. DNS is not changed. Only automatic server routes are supported.</string>
+</resources>

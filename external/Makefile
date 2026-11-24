@@ -40,6 +40,7 @@ ARCH_OC_TARGETS := $(addsuffix /libopenconnect.so,$(ARCH_LIST))
 ARCH_STOKEN_TARGETS := $(addsuffix /libstoken.so,$(ARCH_LIST))
 ARCH_CURL_TARGETS := $(addsuffix /curl,$(ARCH_LIST))
 ARCH_CSD_TARGETS := $(addsuffix /libcsd-wrapper.so,$(ARCH_LIST))
+ARCH_ROOT_TARGETS := $(addsuffix /libroot-epdg.so,$(ARCH_LIST))
 
 get_oc_sysroot = $(TOPDIR)/openconnect/android/$(TRIPLET_$(1))/sysroot/usr
 get_cc = $(TOOLCHAIN)/bin/$(TRIPLET_$(1))$(ANDROID_API)-clang
@@ -100,9 +101,10 @@ $(INSTALL_ARCH_TARGETS): install-arch-%: arch-%
 	cp $*/libstoken.so $(JNI_DIR)/$(NDK_ARCH_$*)/
 	cp $*/curl $(JNI_DIR)/$(NDK_ARCH_$*)/libcurl-bin.so
 	cp $*/libcsd-wrapper.so $(JNI_DIR)/$(NDK_ARCH_$*)/
+	cp $*/libroot-epdg.so $(JNI_DIR)/$(NDK_ARCH_$*)/
 
 .PHONY: $(ARCH_TARGETS)
-$(ARCH_TARGETS): arch-%: %/libopenconnect.so %/libstoken.so %/curl %/libcsd-wrapper.so
+$(ARCH_TARGETS): arch-%: %/libopenconnect.so %/libstoken.so %/curl %/libcsd-wrapper.so %/libroot-epdg.so
 
 $(ARCH_OC_TARGETS): %/libopenconnect.so: $(OPENCONNECT_BOOTSTRAP_STAMP) $(OPENCONNECT_STAMP) Makefile
 	@test -x "$(call get_cc,$*)" || { \
@@ -170,4 +172,9 @@ $(ARCH_CURL_TARGETS): %/curl: %/libopenconnect.so $(CURL_SRC)/configure Makefile
 
 $(ARCH_CSD_TARGETS): %/libcsd-wrapper.so: csd-wrapper.c %/libopenconnect.so Makefile
 	$(call get_cc,$*) -Os -fPIE -pie $(ANDROID_LDFLAGS) $< -o $@
+	$(TOOLCHAIN)/bin/llvm-strip --strip-unneeded $@
+
+$(ARCH_ROOT_TARGETS): %/libroot-epdg.so: root-epdg.c Makefile
+	mkdir -p $*
+	$(call get_cc,$*) -std=c11 -Wall -Wextra -Os -fPIE -pie $(ANDROID_LDFLAGS) $< -o $@
 	$(TOOLCHAIN)/bin/llvm-strip --strip-unneeded $@
