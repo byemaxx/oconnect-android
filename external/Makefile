@@ -111,9 +111,12 @@ $(ARCH_OC_TARGETS): %/libopenconnect.so: $(OPENCONNECT_BOOTSTRAP_STAMP) $(OPENCO
 		echo "Android NDK compiler not found under $(ANDROID_NDK)"; \
 		exit 1; \
 	}
+	# LZ4 1.10 creates BINDIR even for a static library-only install.
+	# Keep that directory in the target sysroot, not the host /usr/local/bin.
 	GIT_DIR=$(OPENCONNECT_GIT_DIR) \
 		$(MAKE) -C openconnect/android ARCH=$* NDK=$(ANDROID_NDK) \
-			API_LEVEL=$(ANDROID_API) EXTRA_LDFLAGS="$(ANDROID_LDFLAGS)"
+			API_LEVEL=$(ANDROID_API) EXTRA_LDFLAGS="$(ANDROID_LDFLAGS)" \
+			BINDIR="$(call get_oc_sysroot,$*)/bin"
 	mkdir -p $*
 	cp -Lf openconnect/android/$(TRIPLET_$*)/out/lib/libopenconnect.so $@
 
