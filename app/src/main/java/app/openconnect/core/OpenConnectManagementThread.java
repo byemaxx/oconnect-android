@@ -792,9 +792,7 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 			}
 			if (mRequestDisconnect) return false;
 			if (mOC.setupTunFD(fd) != 0) {
-				log("Error setting up tunnel fd");
-				errorAlert();
-				return false;
+				throw new IOException("Error setting up tunnel fd");
 			}
 			setState(STATE_CONNECTED);
 			updateStatPref("connect");
@@ -811,6 +809,12 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 			}
 			return true;
 		} catch (Exception e) {
+			// Roll back before showing a potentially blocking error dialog.
+			if (rootTunnel != null) { rootTunnel.close(); rootTunnel = null; }
+			if (pfd != null) {
+				try { pfd.close(); } catch (IOException ignored) {}
+				pfd = null;
+			}
 			log("Tunnel setup failed: " + e.getMessage());
 			if (!mRequestDisconnect) errorAlert(e.getMessage() == null ? "Tunnel setup failed" : e.getMessage());
 			return false;
@@ -838,6 +842,7 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 
 	@Override
 	public void pause () {
+		if (mRootEpDG) { stopVPN(); return; }
 		log("PAUSE");
 		synchronized (mMainloopLock) {
 			if (!mRequestPause && !mRequestDisconnect && mOC != null) {

@@ -145,7 +145,8 @@ int main(int argc, char **argv) {
     /* IPv4-only experiment: do not change IPv6 on any other interface. */
     int v6 = open("/proc/sys/net/ipv6/conf/" IFACE "/disable_ipv6", O_WRONLY | O_CLOEXEC);
     if (v6 >= 0) { if (write(v6, "1", 1) != 1) perror("TUN IPv6 setting"); close(v6); }
-    if (command(IP " -4 addr add %s/%ld dev " IFACE, addr, prefix) ||
+    /* A /32 avoids injecting the server subnet (or a default route) into main. */
+    if (command(IP " -4 addr add %s/32 dev " IFACE, addr) ||
             command(IP " link set dev " IFACE " mtu %ld up", mtu)) goto cleanup;
 
     /* Limit incoming traffic and do not allow tethering through this tunnel. */

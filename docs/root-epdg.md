@@ -43,12 +43,16 @@ signature checks.
 
 The helper installs only two local IPv4 UDP policy rules for the configured
 destination (500/4500), a /32 route in table 19270, narrowly scoped SNAT,
-and ingress/forwarding guards for its private interface ocroot0. It will
+and ingress/forwarding guards for its private interface ocroot0. The assigned
+VPN IPv4 address is configured as a /32 so the server subnet does not add
+an unintended connected route to the main table. It will
 refuse an occupied interface/table/priorities and a target excluded by the
 VPN server. No global default route, DNS changes, telephony changes,
 IPv6 changes on physical interfaces, or cellular routes. A nonpersistent
 TUN and the local control socket tie the routes to the session. Disconnect
 to roll back. Reconnect manually if the underlying connection changes.
+Turn off the app\'s pause-on-screen-off setting if you need the experiment
+while the display is off; pause requests disconnect this root mode.
 
 ## Diagnostics (root)
 
