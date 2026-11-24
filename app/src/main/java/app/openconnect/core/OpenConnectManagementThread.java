@@ -85,6 +85,8 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 	private HashMap<String,Boolean> mAcceptedCerts = new HashMap<String,Boolean>();
 	private HashMap<String,Boolean> mRejectedCerts = new HashMap<String,Boolean>();
 	private boolean mAuthDone = false;
+	private final boolean mRootMode;
+	private RootTunnel mRootTunnel;
 
 	private boolean mRequestPause;
 	private boolean mRequestDisconnect;
@@ -96,6 +98,7 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 		mOpenVPNService = openVpnService;
 		mPrefs = mProfile.mPrefs;
 		mAppPrefs = PreferenceManager.getDefaultSharedPreferences(mContext);
+		mRootMode = mAppPrefs.getBoolean(RootTunnel.ENABLED, false);
 	}
 
     private String getStringPref(final String key) {
@@ -259,6 +262,8 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 		}
 
 		public void onProtectSocket(int fd) {
+			// The root mode does not establish a platform VPN or change default routes.
+			if (mRootMode) return;
 			if (mOpenVPNService.protect(fd) != true) {
 				log("Error protecting fd " + fd);
 			}
@@ -284,18 +289,25 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 			log("error running root commands: " + e.getLocalizedMessage());
 		}
 
-		if (!runVPN()) {
-			log("VPN terminated with errors");
+		try {
+			if (!runVPN()) log("VPN terminated with errors");
+		} catch (RuntimeException e) {
+			log("VPN exception: " + e.getMessage());
+		} finally {
+			synchronized (mMainloopLock) {
+				if (mOC != null) {
+					mOC.destroy();
+					mOC = null;
+				}
+			}
+			if (mRootTunnel != null) {
+				mRootTunnel.close();
+				mRootTunnel = null;
+			}
+			setState(STATE_DISCONNECTED);
+			UserDialog.clearDeferredPrefs();
+			mOpenVPNService.threadDone(this);
 		}
-		setState(STATE_DISCONNECTED);
-
-		synchronized (mMainloopLock) {
-			mOC.destroy();
-			mOC = null;
-		}
-		UserDialog.clearDeferredPrefs();
-
-		mOpenVPNService.threadDone(this);
 	}
 
 	private synchronized void setState(int state) {
@@ -746,23 +758,25 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 			return false;
 		}
 
-		VpnService.Builder b = mOpenVPNService.getVpnServiceBuilder();
-		setIPInfo(b);
-
-		ParcelFileDescriptor pfd;
+		ParcelFileDescriptor pfd = null;
 		try {
-			pfd = b.establish();
-		} catch (Exception e) {
-			log("Exception during establish(): " + e.getLocalizedMessage());
-			return false;
-		}
-
-		if (pfd == null || mOC.setupTunFD(pfd.getFd()) != 0) {
-			log("Error setting up tunnel fd");
-			errorAlert();
-			return false;
-		}
-		setState(STATE_CONNECTED);
+			int fd;
+			if (mRootMode) {
+				log("ROOT: experimental IPv4 ePDG mode");
+				LibOpenConnect.IPInfo ip = mOC.getIPInfo();
+				mRootTunnel = RootTunnel.open(mContext, ip,
+						mAppPrefs.getString(RootTunnel.TARGETS, RootTunnel.DEFAULT_TARGET));
+				mOpenVPNService.setIPInfo(this, ip, mOC.getHostname());
+				fd = mRootTunnel.getFd();
+			} else {
+				VpnService.Builder b = mOpenVPNService.getVpnServiceBuilder();
+				setIPInfo(b);
+				pfd = b.establish();
+				if (pfd == null) throw new IOException("VPN permission or establish failed");
+				fd = pfd.getFd();
+			}
+			if (mOC.setupTunFD(fd) != 0) throw new IOException("Error setting up tunnel fd");
+			setState(STATE_CONNECTED);
 		updateStatPref("connect");
 
 		mOC.setupDTLS(60);
@@ -785,11 +799,24 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 			}
 		}
 
-		try {
-			pfd.close();
-		} catch (IOException e) {
+			return true;
+		} catch (Exception e) {
+			log("Tunnel failed: " + e.getMessage());
+			if (!mRequestDisconnect) errorAlert(String.valueOf(e.getMessage()));
+			return false;
+		} finally {
+			if (pfd != null) {
+				try { pfd.close(); } catch (IOException ignored) {}
+			}
+			if (mRootTunnel != null) {
+				mRootTunnel.close();
+				mRootTunnel = null;
+			}
 		}
-		return true;
+	}
+
+	public boolean isRootMode() {
+		return mRootMode;
 	}
 
 	public void reconnect() {

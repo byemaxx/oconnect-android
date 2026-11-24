@@ -1,0 +1,37 @@
+name: Experimental Root ePDG APK
+on:
+  push:
+    branches: [experimental/root-epdg-tun]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-arm64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake autopoint gettext libtool pkg-config make gcc g++ gperf bison flex perl python3 texinfo unzip xz-utils wget curl patch
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
+      - name: Build ARM64 native libraries
+        run: |
+          make -C external install-arch-arm64 ANDROID_NDK="$ANDROID_HOME/ndk/27.2.12479018"
+      - name: Build and unit test
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon testDebugUnitTest assembleDebug
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: oconnect-root-epdg-arm64-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

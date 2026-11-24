@@ -471,7 +471,8 @@ public class OpenVpnService extends VpnService {
 
 				if (mConnectionState == OpenConnectManagementThread.STATE_CONNECTED &&
 						mKeepAlive == null) {
-					registerKeepAlive();
+					// Root mode does not route arbitrary DNS keepalive traffic.
+					if (mVPN != null && !mVPN.isRootMode()) registerKeepAlive();
 					FeedbackFragment.recordUse(getApplicationContext(), true);
 				}
 			}

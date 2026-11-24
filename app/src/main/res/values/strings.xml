@@ -319,4 +319,8 @@
     <string name="dashboard_traffic_loading">Loading traffic data…</string>
     <string name="connection_details_title">Connection details</string>
     <string name="connection_details_unavailable">Connection information is unavailable.</string>
+    <string name="root_epdg_title">Root ePDG mode (experimental)</string>
+    <string name="root_epdg_summary">Requires root and direct Wi-Fi. Route only selected IPv4 IKE traffic without establishing an Android VPN. Disconnect and reconnect to apply.</string>
+    <string name="root_epdg_targets_title">ePDG hostnames / IPv4 addresses</string>
+    <string name="root_epdg_targets_summary">Comma-separated public ePDG addresses. DNS resolution uses the underlying Wi-Fi; override with known-good IPv4 addresses if needed.</string>
 </resources>
