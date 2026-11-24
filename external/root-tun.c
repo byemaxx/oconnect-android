@@ -99,8 +99,40 @@ static int number(const char *s, long min, long max, long *out) {
     return 0;
 }
 
+/* Check the same privileged TUN operation used by the connection.
+ * No addresses, routes, NAT rules or persistent interface are installed.
+ */
+static int probe(void) {
+    if (geteuid() != 0) {
+        fprintf(stderr, "su did not grant UID 0\n");
+        return 10;
+    }
+    int tun = open("/dev/tun", O_RDWR | O_CLOEXEC);
+    if (tun < 0) tun = open("/dev/net/tun", O_RDWR | O_CLOEXEC);
+    if (tun < 0) {
+        perror("UID 0 granted, but cannot open TUN device");
+        return 11;
+    }
+    struct ifreq ifr = {0};
+    ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
+    snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "acprobe%%d");
+    if (ioctl(tun, TUNSETIFF, &ifr)) {
+        perror("UID 0 granted, but TUNSETIFF failed");
+        close(tun);
+        return 12;
+    }
+    close(tun);
+    puts("ROOT_TUN_PROBE_OK");
+    return 0;
+}
+
 int main(int argc, char **argv) {
-    if (geteuid() != 0 || argc < 6 || argc > 5 + MAX_TARGETS) return 2;
+    if (argc == 2 && strcmp(argv[1], "--probe") == 0) return probe();
+    if (geteuid() != 0) {
+        fprintf(stderr, "su did not grant UID 0\n");
+        return 10;
+    }
+    if (argc < 6 || argc > 5 + MAX_TARGETS) return 2;
     const char *name = argv[1];
     const char *prefix = "oconnect-root-";
     size_t prefix_len = strlen(prefix);

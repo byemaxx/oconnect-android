@@ -8,7 +8,7 @@ This opt-in mode preserves the existing OpenConnect authentication/UI, but does 
 2. Install the debug APK; it has the upstream application ID and a different signing key, so it cannot replace an upstream release in place. Back up/export profiles before uninstalling or use a test device.
 3. Disable any other VPN, proxy, and previous IKE routing modules. Connect to Wi-Fi (airplane mode with Wi-Fi enabled is recommended).
 4. In Advanced Settings, enable **Root ePDG mode (experimental)** and set the target domain or known-good IPv4 addresses from a successful control test.
-5. Connect normally and grant root permission. Authentication and MFA are unchanged.
+5. Tap **Test root access** to verify UID 0 and temporary TUN creation. The test does not add routes or NAT rules. Connect normally and grant root permission; root is checked again before authentication. Authentication and MFA are unchanged.
 6. Confirm no Android VPN NetworkAgent was established with `dumpsys connectivity`; check `ip -br addr`, `ip -4 rule show`, and `logcat -s OConnectRoot`. Retry IMS registration.
 7. Disconnect and check that the helper's routing and SNAT rules are removed. Disable root mode and reconnect to restore normal behavior.
 

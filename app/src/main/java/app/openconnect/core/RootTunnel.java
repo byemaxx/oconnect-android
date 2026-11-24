@@ -18,7 +18,6 @@ import android.util.Log;
 import org.infradead.libopenconnect.LibOpenConnect;
 
 import java.io.BufferedReader;
-import java.io.File;
 import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -92,11 +91,7 @@ final class RootTunnel implements AutoCloseable {
         if (mtu < 576 || mtu > 9000) throw new IOException("Invalid tunnel MTU");
         String nonce = UUID.randomUUID().toString().replace("-", "");
         String socketName = "oconnect-root-" + nonce;
-        String executable = context.getApplicationInfo().nativeLibraryDir
-                + File.separator + "libroot-tun.so";
-        if (!new File(executable).isFile()) {
-            throw new IOException("Root helper missing for this ABI");
-        }
+        String executable = RootAccess.helperPath(context);
         ArrayList<String> args = new ArrayList<>();
         args.add(executable);
         args.add(socketName);
@@ -104,17 +99,10 @@ final class RootTunnel implements AutoCloseable {
         args.add(vpnAddress.getHostAddress() + "/" + cidr.len);
         args.add(Integer.toString(mtu));
         args.addAll(resolved);
-        StringBuilder command = new StringBuilder();
-        for (String arg : args) {
-            if (command.length() > 0) command.append(' ');
-            command.append('\'').append(arg.replace("'", "'\\''")).append('\'');
-        }
-
         RootTunnel result = new RootTunnel();
         boolean success = false;
         try {
-            result.helper = new ProcessBuilder("su", "-c", command.toString())
-                    .redirectErrorStream(true).start();
+            result.helper = RootAccess.start(args.toArray(new String[0]));
             final java.lang.Process proc = result.helper;
             Thread logger = new Thread(() -> {
                 try (BufferedReader reader = new BufferedReader(

@@ -722,6 +722,17 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 			mOC = new AndroidOC();
 		}
 
+		if (mRootMode) {
+			try {
+				RootAccess.check(mContext);
+				log("ROOT: UID 0 and TUN creation verified");
+			} catch (IOException e) {
+				log("ROOT: " + e.getMessage());
+				if (!mRequestDisconnect) errorAlert(e.getMessage());
+				return false;
+			}
+		}
+
 		if (setPreferences() == false) {
 			return false;
 		}
