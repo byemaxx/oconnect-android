@@ -87,9 +87,10 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 	private boolean mAuthDone = false;
 	private final boolean mRootMode;
 	private RootTunnel mRootTunnel;
+	private RootTunnel.Uplink mRootUplink;
 
 	private boolean mRequestPause;
-	private boolean mRequestDisconnect;
+	private volatile boolean mRequestDisconnect;
 	private Object mMainloopLock = new Object();
 
     public OpenConnectManagementThread(Context context, VpnProfile profile, OpenVpnService openVpnService) {
@@ -311,6 +312,10 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 			if (mRootTunnel != null) {
 				mRootTunnel.close();
 				mRootTunnel = null;
+			}
+			if (mRootUplink != null) {
+				mRootUplink.close();
+				mRootUplink = null;
 			}
 			setState(STATE_DISCONNECTED);
 			UserDialog.clearDeferredPrefs();
@@ -732,15 +737,20 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 
 		if (mRootMode) {
 			try {
+				mRootUplink = RootTunnel.prepareUplink(mContext,
+						mAppPrefs.getString(RootTunnel.TARGETS, RootTunnel.DEFAULT_TARGET));
+				log("ROOT: selected Wi-Fi " + mRootUplink.interfaceName
+						+ " before authentication");
 				RootAccess.check(mContext);
 				log("ROOT: UID 0 and TUN creation verified");
-			} catch (IOException e) {
+			} catch (IOException | RuntimeException e) {
 				log("ROOT: " + e.getMessage());
 				if (!mRequestDisconnect) errorAlert(e.getMessage());
 				return false;
 			}
 		}
 
+		if (mRequestDisconnect) return false;
 		if (setPreferences() == false) {
 			return false;
 		}
@@ -783,8 +793,7 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 			if (mRootMode) {
 				log("ROOT: experimental IPv4 ePDG mode");
 				LibOpenConnect.IPInfo ip = mOC.getIPInfo();
-				mRootTunnel = RootTunnel.open(mContext, ip,
-						mAppPrefs.getString(RootTunnel.TARGETS, RootTunnel.DEFAULT_TARGET));
+				mRootTunnel = RootTunnel.open(mContext, ip, mRootUplink);
 				mOpenVPNService.setIPInfo(this, ip, mOC.getHostname());
 				fd = mRootTunnel.getFd();
 			} else {

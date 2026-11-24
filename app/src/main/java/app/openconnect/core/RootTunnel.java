@@ -7,6 +7,7 @@ import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.LinkProperties;
 import android.net.LocalSocket;
 import android.net.LocalSocketAddress;
 import android.os.Build;
@@ -44,19 +45,149 @@ final class RootTunnel implements AutoCloseable {
     private ParcelFileDescriptor tun;
     private java.lang.Process helper;
 
-    static RootTunnel open(Context context, LibOpenConnect.IPInfo ip, String targets)
-            throws Exception {
+    private static Uplink activeUplink;
+
+    private static boolean isWifi(NetworkCapabilities caps) {
+        return caps != null
+                && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                && !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN);
+    }
+
+    /**
+     * Select physical Wi-Fi before authenticating. Binding is app-process scoped,
+     * not system-wide, and is restored when the session exits.
+     */
+    static final class Uplink implements AutoCloseable {
+        private final ConnectivityManager cm;
+        private final Network network;
+        private final Network previous;
+        final Set<String> targets;
+        final String interfaceName;
+
+        private Uplink(ConnectivityManager cm, Network network, Network previous,
+                Set<String> targets, String interfaceName) {
+            this.cm = cm;
+            this.network = network;
+            this.previous = previous;
+            this.targets = targets;
+            this.interfaceName = interfaceName;
+        }
+
+        void verifyAvailable() throws IOException {
+            if (!isWifi(cm.getNetworkCapabilities(network))) {
+                throw new IOException("Selected Wi-Fi connection was lost during VPN setup");
+            }
+            if (!network.equals(cm.getBoundNetworkForProcess())) {
+                throw new IOException("Wi-Fi process binding changed during VPN setup");
+            }
+        }
+
+        @Override
+        public void close() {
+            synchronized (RootTunnel.class) {
+                if (activeUplink != this) return;
+                try {
+                    if (network.equals(cm.getBoundNetworkForProcess())
+                            && !cm.bindProcessToNetwork(previous)) {
+                        // A previously bound network may have disappeared.
+                        cm.bindProcessToNetwork(null);
+                    }
+                } catch (RuntimeException e) {
+                    Log.w(TAG, "Unable to restore previous app network binding", e);
+                } finally {
+                    activeUplink = null;
+                }
+            }
+        }
+    }
+
+    static synchronized Uplink prepareUplink(Context context, String targets)
+            throws IOException {
         if (Build.VERSION.SDK_INT < 26) {
             throw new IOException("Root ePDG mode requires Android 8 or newer");
         }
+        if (activeUplink != null) {
+            throw new IOException("Previous root session is still closing; disconnect first");
+        }
         ConnectivityManager cm = (ConnectivityManager)
                 context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        Network network = cm.getActiveNetwork();
-        NetworkCapabilities caps = cm.getNetworkCapabilities(network);
-        if (caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
-                || !caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
-            throw new IOException("Connect directly to Wi-Fi and disconnect other VPNs first");
+        if (cm == null) throw new IOException("Connectivity service unavailable");
+
+        Network active = cm.getActiveNetwork();
+        NetworkCapabilities activeCaps = active == null ? null : cm.getNetworkCapabilities(active);
+        if (activeCaps != null && activeCaps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+            throw new IOException("Another Android VPN is active. Disconnect it before starting Root ePDG mode.");
         }
+
+        Network wifi = isWifi(activeCaps) ? active : null;
+        if (wifi == null) {
+            // A connected Wi-Fi network may not be Android's default network,
+            // especially with dual SIM or an unvalidated Wi-Fi connection.
+            for (Network candidate : cm.getAllNetworks()) {
+                NetworkCapabilities caps = cm.getNetworkCapabilities(candidate);
+                if (!isWifi(caps)) continue;
+                if (wifi == null) wifi = candidate;
+                if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                    wifi = candidate;
+                    break;
+                }
+            }
+        }
+        if (wifi == null) {
+            throw new IOException("No connected Wi-Fi internet network found. Connect to Wi-Fi before starting Root ePDG mode.");
+        }
+        LinkProperties links = cm.getLinkProperties(wifi);
+        if (links == null || links.getInterfaceName() == null) {
+            throw new IOException("Wi-Fi link is not ready yet. Try reconnecting to Wi-Fi.");
+        }
+
+        Set<String> resolved = resolveTargets(wifi, targets);
+        Network previous = cm.getBoundNetworkForProcess();
+        if (!cm.bindProcessToNetwork(wifi)) {
+            throw new IOException("Could not bind OConnect to the selected Wi-Fi network");
+        }
+        Uplink uplink = new Uplink(cm, wifi, previous, resolved, links.getInterfaceName());
+        activeUplink = uplink;
+        Log.i(TAG, "Selected physical Wi-Fi: " + uplink.interfaceName
+                + "; default network was " + active + "; targets=" + resolved);
+        return uplink;
+    }
+
+    private static Set<String> resolveTargets(Network wifi, String targets) throws IOException {
+        Set<String> resolved = new LinkedHashSet<>();
+        for (String host : targets.trim().split("[,\\s]+")) {
+            if (host.isEmpty()) continue;
+            if (!host.matches("[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}")) {
+                throw new IOException("Invalid ePDG address or hostname");
+            }
+            InetAddress[] addresses;
+            try {
+                addresses = wifi.getAllByName(host);
+            } catch (IOException e) {
+                throw new IOException("Cannot resolve ePDG on Wi-Fi: " + host
+                        + ". Check DNS or configure known-good IPv4 addresses.", e);
+            }
+            for (InetAddress addr : addresses) {
+                if (addr instanceof Inet4Address && !addr.isAnyLocalAddress()
+                        && !addr.isLoopbackAddress() && !addr.isLinkLocalAddress()
+                        && !addr.isMulticastAddress() && !addr.isSiteLocalAddress()) {
+                    resolved.add(addr.getHostAddress());
+                }
+            }
+        }
+        if (resolved.isEmpty() || resolved.size() > MAX_TARGETS) {
+            throw new IOException("Specify 1-8 public IPv4 ePDG addresses");
+        }
+        return resolved;
+    }
+
+    static RootTunnel open(Context context, LibOpenConnect.IPInfo ip, Uplink uplink)
+            throws Exception {
+        // Do not re-evaluate the default network after CSTP authentication.
+        // The preflight-selected physical Wi-Fi must still be usable.
+        uplink.verifyAvailable();
         if (ip.addr == null || ip.netmask == null) {
             throw new IOException("VPN server did not assign an IPv4 address");
         }
@@ -69,24 +200,7 @@ final class RootTunnel implements AutoCloseable {
             throw new IOException("Invalid VPN IPv4 address");
         }
         CIDRIP cidr = new CIDRIP(ip.addr, ip.netmask);
-        Set<String> resolved = new LinkedHashSet<>();
-        for (String host : targets.trim().split("[,\\s]+")) {
-            if (host.isEmpty()) continue;
-            // Only literal addresses or ordinary DNS names; no shell fragments.
-            if (!host.matches("[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}")) {
-                throw new IOException("Invalid ePDG address or hostname");
-            }
-            for (InetAddress addr : network.getAllByName(host)) {
-                if (addr instanceof Inet4Address && !addr.isAnyLocalAddress()
-                        && !addr.isLoopbackAddress() && !addr.isLinkLocalAddress()
-                        && !addr.isMulticastAddress() && !addr.isSiteLocalAddress()) {
-                    resolved.add(addr.getHostAddress());
-                }
-            }
-        }
-        if (resolved.isEmpty() || resolved.size() > MAX_TARGETS) {
-            throw new IOException("Specify 1-8 public IPv4 ePDG addresses");
-        }
+        Set<String> resolved = uplink.targets;
         int mtu = ip.MTU > 0 ? ip.MTU : 1400;
         if (mtu < 576 || mtu > 9000) throw new IOException("Invalid tunnel MTU");
         String nonce = UUID.randomUUID().toString().replace("-", "");

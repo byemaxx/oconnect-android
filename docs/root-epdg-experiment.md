@@ -19,3 +19,7 @@ Build using `git submodule update --init --recursive`, `make -C external install
 ## TUN compatibility option
 
 On Android 8+, **Ensure TUN support** (formerly Load tun module) is always selectable. When enabled, it first checks whether UID 0 can create a temporary TUN interface. If successful, it skips module loading, including kernels with CONFIG_TUN=y. If the TUN device is absent, it tries only an existing OS-provided tun.ko at a known system/vendor module path and verifies TUN afterward. Permission errors do not trigger module loading. No foreign kernel module is bundled or forced into the running kernel. The option is independent of Root ePDG mode and is optional on devices that already support TUN.
+
+## Wi-Fi preflight
+
+Before requesting VPN credentials or MFA, Root ePDG mode selects a physical Wi-Fi internet network (including Wi-Fi that is not the default network), resolves the ePDG targets on it, and binds only the OConnect application process to that network. An active Android VPN is rejected before authentication. The binding is restored on session termination. After CSTP setup, the code verifies only the selected Wi-Fi is still available and uses the pre-resolved targets; it no longer treats a cellular default network as a missing Wi-Fi connection. Wi-Fi loss during setup can still cause a real connection failure. The ordinary VpnService mode is unchanged.
