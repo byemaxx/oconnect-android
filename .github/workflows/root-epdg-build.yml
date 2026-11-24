@@ -17,11 +17,18 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: ""
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y autoconf automake autopoint gettext libtool pkg-config make gcc g++ gperf bison flex perl python3 texinfo unzip xz-utils wget curl patch
+      - name: Install Android SDK and NDK
+        run: |
+          sdkmanager --version
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
+          test -x "$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android23-clang"
       - name: Build ARM64 native libraries
         run: |
           make -C external install-arch-arm64 ANDROID_NDK="$ANDROID_HOME/ndk/27.2.12479018"
