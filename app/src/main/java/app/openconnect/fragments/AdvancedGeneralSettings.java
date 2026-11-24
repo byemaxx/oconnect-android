@@ -15,6 +15,7 @@ import android.widget.Toast;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.os.Build;
 import android.preference.ListPreference;
 import android.preference.Preference;
 import android.preference.PreferenceFragment;
@@ -36,9 +37,16 @@ public class AdvancedGeneralSettings extends PreferenceFragment
         addPreferencesFromResource(R.xml.advanced_general_settings);
 
         Preference loadTun = findPreference("loadTunModule");
-        if (loadTun != null && !isTunModuleAvailable()) {
-            loadTun.setEnabled(false);
-            loadTun.setSummary(R.string.root_tun_module_unavailable);
+        if (loadTun != null) {
+            // Modern kernels may have built-in TUN; a missing tun.ko is not a failure.
+            if (Build.VERSION.SDK_INT >= 26) {
+                loadTun.setEnabled(true);
+                loadTun.setTitle(R.string.ensure_tun_title);
+                loadTun.setSummary(R.string.ensure_tun_summary);
+            } else if (!isTunModuleAvailable()) {
+                loadTun.setEnabled(false);
+                loadTun.setSummary(R.string.root_tun_module_unavailable);
+            }
         }
 
         Preference rootMode = findPreference("root_epdg_enabled");

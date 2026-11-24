@@ -110,8 +110,10 @@ static int probe(void) {
     int tun = open("/dev/tun", O_RDWR | O_CLOEXEC);
     if (tun < 0) tun = open("/dev/net/tun", O_RDWR | O_CLOEXEC);
     if (tun < 0) {
+        int error = errno;
         perror("UID 0 granted, but cannot open TUN device");
-        return 11;
+        /* Do not treat a permission or SELinux denial as a missing driver. */
+        return (error == ENOENT || error == ENODEV || error == ENXIO) ? 11 : 13;
     }
     struct ifreq ifr = {0};
     ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
@@ -126,8 +128,41 @@ static int probe(void) {
     return 0;
 }
 
+/* Prefer the running kernel's TUN driver. Only use an existing OS-provided
+ * module if the device is unavailable, never a bundled foreign kernel module.
+ */
+static int ensure_tun(void) {
+    int status = probe();
+    if (status == 0) {
+        puts("TUN already available; module loading skipped");
+        return 0;
+    }
+    if (status != 11) return status;
+    const char *paths[] = {
+        "/system/lib/modules/tun.ko",
+        "/vendor/lib/modules/tun.ko",
+        "/vendor_dlkm/lib/modules/tun.ko",
+        "/system_dlkm/lib/modules/tun.ko",
+        "/odm/lib/modules/tun.ko"
+    };
+    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+        if (access(paths[i], R_OK) != 0) continue;
+        /* The kernel enforces module ABI, signature and loading restrictions. */
+        if (command("/system/bin/insmod", paths[i], (char *)NULL) == 0) {
+            puts("Loaded device-provided TUN module");
+            return probe();
+        }
+        /* A concurrent loader may already have made TUN available. */
+        status = probe();
+        if (status == 0 || status != 11) return status;
+    }
+    fprintf(stderr, "TUN unavailable; no compatible device-provided module could be loaded\n");
+    return 11;
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--probe") == 0) return probe();
+    if (argc == 2 && strcmp(argv[1], "--ensure-tun") == 0) return ensure_tun();
     if (geteuid() != 0) {
         fprintf(stderr, "su did not grant UID 0\n");
         return 10;

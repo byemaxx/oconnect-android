@@ -35,13 +35,21 @@ public final class RootAccess {
     }
 
     public static void check(Context context) throws IOException {
+        runProbe(context, "--probe");
+    }
+
+    public static String ensureTun(Context context) throws IOException {
+        return runProbe(context, "--ensure-tun");
+    }
+
+    private static String runProbe(Context context, String mode) throws IOException {
         if (Build.VERSION.SDK_INT < 26) {
             throw new IOException("Root ePDG mode requires Android 8 or newer");
         }
         String path = helperPath(context);
         Process process;
         try {
-            process = start(path, "--probe");
+            process = start(path, mode);
         } catch (IOException e) {
             throw new IOException("Cannot launch su: " + e.getMessage(), e);
         }
@@ -62,6 +70,7 @@ public final class RootAccess {
                 throw new IOException("Root/TUN check failed (exit " + process.exitValue()
                         + "): " + (result.isEmpty() ? "Check KernelSU app permission and profile." : result));
             }
+            return result;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("Root check interrupted", e);

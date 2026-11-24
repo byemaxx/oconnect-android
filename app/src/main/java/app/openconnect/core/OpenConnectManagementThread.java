@@ -280,7 +280,15 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 
 		try {
 			if (mAppPrefs.getBoolean("loadTunModule", false)) {
-				Shell.runRootCommand(new CommandCapture(0, "insmod /system/lib/modules/tun.ko"));
+				if (Build.VERSION.SDK_INT >= 26) {
+					log("TUN: " + RootAccess.ensureTun(mContext));
+				} else {
+					// Preserve the legacy loader on pre-Android 8 devices.
+					File module = new File("/system/lib/modules/tun.ko");
+					if (module.isFile()) {
+						Shell.runRootCommand(new CommandCapture(0, "insmod /system/lib/modules/tun.ko"));
+					}
+				}
 			}
 			if (mAppPrefs.getBoolean("useCM9Fix", false)) {
 				Shell.runRootCommand(new CommandCapture(0, "chown 1000 /dev/tun"));

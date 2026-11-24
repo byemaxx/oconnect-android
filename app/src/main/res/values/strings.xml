@@ -330,4 +330,6 @@
     <string name="root_check_running">Checking root authorization and TUN support…</string>
     <string name="root_check_success">Root granted (UID 0). Temporary TUN creation succeeded.</string>
     <string name="root_check_failed">Root check failed: %1$s</string>
+    <string name="ensure_tun_title">Ensure TUN support</string>
+    <string name="ensure_tun_summary">Requires root. Use the existing kernel TUN driver if available; otherwise try a device-provided tun.ko before connecting.</string>
 </resources>
