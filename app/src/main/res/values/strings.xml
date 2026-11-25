@@ -322,7 +322,7 @@
     <string name="root_epdg_title">Root ePDG mode (experimental)</string>
     <string name="root_epdg_summary">Requires root and direct Wi-Fi. Route only selected IPv4 IKE traffic without establishing an Android VPN. Disconnect and reconnect to apply.</string>
     <string name="root_epdg_targets_title">ePDG hostnames / IPv4 addresses</string>
-    <string name="root_epdg_targets_summary">Comma-separated public ePDG addresses. DNS resolution uses the underlying Wi-Fi; override with known-good IPv4 addresses if needed.</string>
+    <string name="root_epdg_targets_summary">Comma-separated public ePDG addresses. On Qualcomm, enter freedom=208.98.222.239 to use the Freedom-specific DNS, IKE and ESP relay.</string>
     <string name="root_epdg_category">Root ePDG (experimental)</string>
     <string name="root_tun_module_unavailable">No legacy tun.ko file found. Modern kernels may have TUN built in. This does not prevent Root ePDG mode.</string>
     <string name="root_check_title">Test root access</string>

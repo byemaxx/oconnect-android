@@ -253,4 +253,5 @@
   <string name="dashboard_traffic_loading">正在获取流量信息…</string>
   <string name="connection_details_title">连接详情</string>
   <string name="connection_details_unavailable">暂时无法获取连接信息。</string>
+    <string name="root_epdg_targets_summary">填写逗号分隔的公网 ePDG 地址。高通设备可输入 freedom=208.98.222.239，启用 Freedom 专用 DNS、IKE 和 ESP 中继。</string>
 </resources>

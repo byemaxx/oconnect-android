@@ -23,3 +23,9 @@ On Android 8+, **Ensure TUN support** (formerly Load tun module) is always selec
 ## Wi-Fi preflight
 
 Before requesting VPN credentials or MFA, Root ePDG mode selects a physical Wi-Fi internet network (including Wi-Fi that is not the default network), resolves the ePDG targets on it, and binds only the OConnect application process to that network. An active Android VPN is rejected before authentication. The binding is restored on session termination. After CSTP setup, the code verifies only the selected Wi-Fi is still available and uses the pre-resolved targets; it no longer treats a cellular default network as a missing Wi-Fi connection. Wi-Fi loss during setup can still cause a real connection failure. The ordinary VpnService mode is unchanged.
+
+## Freedom relay on Qualcomm Wi-Fi
+
+Enter `freedom=208.98.222.239` instead of a normal target list to enable the Freedom relay for this connection. Use an endpoint verified for the VPN in use. This mode requires Wi-Fi IPv4, an IPv4 or link-local IPv6 Wi-Fi resolver, one active Qualcomm reverse rmnet interface, and a Wi-Fi egress clsact. It answers only the Freedom ePDG hostname and carries the selected endpoint's UDP 500 and 4500 over the VPN. It returns IKE signaling to the modem and encrypted IMS packets to the Wi-Fi input path. It is tied to the current Wi-Fi address and modem interface. Reconnect the VPN after either changes.
+
+A normal disconnect removes the relay workers, its two Wi-Fi filters, its root-only route and its temporary capture interface.

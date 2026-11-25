@@ -7,6 +7,7 @@ import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.LinkAddress;
 import android.net.LinkProperties;
 import android.net.LocalSocket;
 import android.net.LocalSocketAddress;
@@ -23,9 +24,12 @@ import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.Inet4Address;
+import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -65,14 +69,16 @@ final class RootTunnel implements AutoCloseable {
         private final Network previous;
         final Set<String> targets;
         final String interfaceName;
+        final boolean freedomRelay;
 
         private Uplink(ConnectivityManager cm, Network network, Network previous,
-                Set<String> targets, String interfaceName) {
+                Set<String> targets, String interfaceName, boolean freedomRelay) {
             this.cm = cm;
             this.network = network;
             this.previous = previous;
             this.targets = targets;
             this.interfaceName = interfaceName;
+            this.freedomRelay = freedomRelay;
         }
 
         void verifyAvailable() throws IOException {
@@ -143,16 +149,34 @@ final class RootTunnel implements AutoCloseable {
             throw new IOException("Wi-Fi link is not ready yet. Try reconnecting to Wi-Fi.");
         }
 
-        Set<String> resolved = resolveTargets(wifi, targets);
+        String input = targets.trim();
+        boolean freedomRelay = input.toLowerCase(Locale.ROOT).startsWith("freedom=");
+        Set<String> resolved = freedomRelay
+                ? Collections.singleton(freedomEndpoint(input.substring("freedom=".length())))
+                : resolveTargets(wifi, targets);
         Network previous = cm.getBoundNetworkForProcess();
         if (!cm.bindProcessToNetwork(wifi)) {
             throw new IOException("Could not bind OConnect to the selected Wi-Fi network");
         }
-        Uplink uplink = new Uplink(cm, wifi, previous, resolved, links.getInterfaceName());
+        Uplink uplink = new Uplink(cm, wifi, previous, resolved, links.getInterfaceName(), freedomRelay);
         activeUplink = uplink;
         Log.i(TAG, "Selected physical Wi-Fi: " + uplink.interfaceName
                 + "; default network was " + active + "; targets=" + resolved);
         return uplink;
+    }
+
+    private static String freedomEndpoint(String input) throws IOException {
+        String value = input.trim();
+        if (!value.matches("[0-9]{1,3}(\\.[0-9]{1,3}){3}")) {
+            throw new IOException("Freedom relay requires freedom=<public IPv4 address>");
+        }
+        InetAddress address = InetAddress.getByName(value);
+        if (!(address instanceof Inet4Address) || address.isAnyLocalAddress()
+                || address.isLoopbackAddress() || address.isLinkLocalAddress()
+                || address.isMulticastAddress() || address.isSiteLocalAddress()) {
+            throw new IOException("Freedom relay requires a public IPv4 address");
+        }
+        return address.getHostAddress();
     }
 
     private static Set<String> resolveTargets(Network wifi, String targets) throws IOException {
@@ -212,6 +236,32 @@ final class RootTunnel implements AutoCloseable {
         args.add(Integer.toString(android.os.Process.myUid()));
         args.add(vpnAddress.getHostAddress() + "/" + cidr.len);
         args.add(Integer.toString(mtu));
+        if (uplink.freedomRelay) {
+            LinkProperties links = uplink.cm.getLinkProperties(uplink.network);
+            if (links == null || !uplink.interfaceName.equals(links.getInterfaceName())) {
+                throw new IOException("Wi-Fi link changed before Freedom relay setup");
+            }
+            String wifiAddress = null;
+            for (LinkAddress address : links.getLinkAddresses()) {
+                if (address.getAddress() instanceof Inet4Address) {
+                    wifiAddress = address.getAddress().getHostAddress();
+                    break;
+                }
+            }
+            if (wifiAddress == null) throw new IOException("Freedom relay requires Wi-Fi IPv4");
+            String dns4 = "-", dns6 = "-";
+            for (InetAddress dns : links.getDnsServers()) {
+                if (dns instanceof Inet4Address && dns4.equals("-")) {
+                    dns4 = dns.getHostAddress();
+                } else if (dns instanceof Inet6Address && dns.isLinkLocalAddress() && dns6.equals("-")) {
+                    dns6 = dns.getHostAddress().split("%", 2)[0];
+                }
+            }
+            if (dns4.equals("-") && dns6.equals("-")) {
+                throw new IOException("Freedom relay requires Wi-Fi IPv4 or link-local IPv6 DNS");
+            }
+            Collections.addAll(args, "--freedom-relay", uplink.interfaceName, wifiAddress, dns4, dns6);
+        }
         args.addAll(resolved);
         RootTunnel result = new RootTunnel();
         boolean success = false;

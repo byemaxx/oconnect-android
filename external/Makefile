@@ -177,7 +177,9 @@ $(ARCH_CSD_TARGETS): %/libcsd-wrapper.so: csd-wrapper.c %/libopenconnect.so Make
 	$(call get_cc,$*) -Os -fPIE -pie $(ANDROID_LDFLAGS) $< -o $@
 	$(TOOLCHAIN)/bin/llvm-strip --strip-unneeded $@
 
-$(ARCH_ROOT_TARGETS): %/libroot-tun.so: root-tun.c Makefile
+ROOT_TUN_SOURCES := root-tun.c root-relay.c root-relay-dns.c root-relay-packets.c
+
+$(ARCH_ROOT_TARGETS): %/libroot-tun.so: $(ROOT_TUN_SOURCES) root-relay.h Makefile
 	mkdir -p $*
-	$(call get_cc,$*) -Wall -Wextra -Os -fPIE -pie $(ANDROID_LDFLAGS) $< -o $@
+	$(call get_cc,$*) -Wall -Wextra -Os -fPIE -pie $(ANDROID_LDFLAGS) $(ROOT_TUN_SOURCES) -o $@
 	$(TOOLCHAIN)/bin/llvm-strip --strip-unneeded $@

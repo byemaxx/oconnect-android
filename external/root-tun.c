@@ -21,6 +21,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "root-relay.h"
+
 #define MAX_TARGETS 8
 #define IP "/system/bin/ip"
 #define IPT "/system/bin/iptables"
@@ -30,7 +32,7 @@ static volatile sig_atomic_t stopped;
 static void stop_signal(int sig) { (void)sig; stopped = 1; }
 
 /* Execute a fixed binary with separate arguments, never a shell string. */
-static int command(const char *path, ...) {
+int root_command(const char *path, ...) {
     char *argv[40];
     int n = 0;
     va_list ap;
@@ -60,14 +62,14 @@ static int command(const char *path, ...) {
 
 static int rule(const char *action, const char *target,
                 const char *port, const char *table) {
-    return command(IP, "-4", "rule", action, "pref", PREF, "iif", "lo",
+    return root_command(IP, "-4", "rule", action, "pref", PREF, "iif", "lo",
                    "to", target, "ipproto", "udp", "dport", port,
                    "lookup", table, (char *)NULL);
 }
 
 static int nat(const char *action, const char *dev, const char *target,
                const char *port, const char *address) {
-    return command(IPT, "-w", "5", "-t", "nat", action, "POSTROUTING",
+    return root_command(IPT, "-w", "5", "-t", "nat", action, "POSTROUTING",
                    "-o", dev, "-d", target, "-p", "udp", "--dport", port,
                    "-j", "SNAT", "--to-source", address, (char *)NULL);
 }
@@ -193,7 +195,7 @@ static int ensure_tun(void) {
     for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
         if (access(paths[i], R_OK) != 0) continue;
         /* The kernel enforces module ABI, signature and loading restrictions. */
-        if (command("/system/bin/insmod", paths[i], (char *)NULL) == 0) {
+        if (root_command("/system/bin/insmod", paths[i], (char *)NULL) == 0) {
             puts("Loaded device-provided TUN module");
             return probe();
         }
@@ -232,10 +234,13 @@ int main(int argc, char **argv) {
     if (inet_pton(AF_INET, address, &tmp) != 1 ||
         number(slash + 1, 0, 32, &bits)) return 2;
     snprintf(cidr, sizeof(cidr), "%s/%ld", address, bits);
-    int count = argc - 5;
+    int freedom = strcmp(argv[5], "--freedom-relay") == 0;
+    if (freedom && argc != 11) return 2;
+    int target_arg = freedom ? 10 : 5;
+    int count = argc - target_arg;
     for (int i = 0; i < count; i++) {
-        if (inet_pton(AF_INET, argv[i + 5], &tmp) != 1) return 2;
-        snprintf(targets[i], sizeof(targets[i]), "%s/32", argv[i + 5]);
+        if (inet_pton(AF_INET, argv[i + target_arg], &tmp) != 1) return 2;
+        snprintf(targets[i], sizeof(targets[i]), "%s/32", argv[i + target_arg]);
     }
     char table[16], dev[IFNAMSIZ];
     /* A session-specific table/name. Never flush other routing tables. */
@@ -245,6 +250,12 @@ int main(int argc, char **argv) {
     snprintf(table, sizeof(table), "%lu", 100000UL + token);
     snprintf(dev, sizeof(dev), "acv%s", hex);
     if (if_nametoindex(dev)) return 2;
+    struct epdg_relay relay = {.vpn = address, .table = table, .tunnel = dev};
+    if (freedom) {
+        relay.wifi = argv[6];
+        relay.endpoint = argv[10];
+        snprintf(relay.dummy, sizeof(relay.dummy), "ocd%s", hex);
+    }
 
     signal(SIGPIPE, SIG_IGN);
     signal(SIGTERM, stop_signal);
@@ -285,13 +296,15 @@ int main(int argc, char **argv) {
     snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "%s", dev);
     if (ioctl(tun, TUNSETIFF, &ifr)) { perror("TUNSETIFF"); goto done; }
 
-    if (command(IP, "-4", "addr", "add", cidr, "dev", dev, (char *)NULL) ||
-        command(IP, "link", "set", "dev", dev, "mtu", argv[4], "up", (char *)NULL) ||
-        command(IP, "-4", "route", "add", "default", "dev", dev, "src", address,
+    if (root_command(IP, "-4", "addr", "add", cidr, "dev", dev, (char *)NULL) ||
+        root_command(IP, "link", "set", "dev", dev, "mtu", argv[4], "up", (char *)NULL) ||
+        root_command(IP, "-4", "route", "add", "default", "dev", dev, "src", address,
                 "table", table, (char *)NULL)) goto done;
     route_added = 1;
 
-    for (int i = 0; i < count; i++) {
+    if (freedom && epdg_relay_start(&relay, argv[7], argv[8], argv[9], tun, client))
+        goto done;
+    for (int i = 0; !freedom && i < count; i++) {
         for (int j = 0; j < 2; j++) {
             if (stopped || nat("-A", dev, targets[i], ports[j], address)) goto done;
             nats[i][j] = 1;
@@ -309,16 +322,21 @@ int main(int argc, char **argv) {
         int ready = poll(&p, 1, 1000);
         if (ready < 0 && errno != EINTR) break;
         if (ready > 0) break;
+        if (freedom && !epdg_relay_alive(&relay)) {
+            fprintf(stderr, "Freedom relay worker exited; closing tunnel\n");
+            goto done;
+        }
     }
     rc = 0;
 done:
+    if (freedom) epdg_relay_stop(&relay);
     for (int i = count - 1; i >= 0; i--) {
         for (int j = 1; j >= 0; j--) {
             if (rules[i][j]) rule("del", targets[i], ports[j], table);
             if (nats[i][j]) nat("-D", dev, targets[i], ports[j], address);
         }
     }
-    if (route_added) command(IP, "-4", "route", "del", "default", "dev", dev,
+    if (route_added) root_command(IP, "-4", "route", "del", "default", "dev", dev,
                              "src", address, "table", table, (char *)NULL);
     if (tun >= 0) close(tun);
     if (client >= 0) close(client);
