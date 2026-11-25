@@ -1,5 +1,9 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <resources>
+    <string name="connection_mode_title">VPN 路由模式</string>
+    <string name="connection_mode_global">全局 VPN（按服务器下发路由）</string>
+    <string name="connection_mode_vowifi">仅 Wi-Fi 通话（需要 Root）</string>
+    <string name="connection_mode_reconnect">重新连接后应用所选模式。</string>
   <string name="app">OConnect</string>
   <string name="location">地点</string>
   <string name="cant_read_folder">无法读取目录</string>
@@ -254,4 +258,13 @@
   <string name="connection_details_title">连接详情</string>
   <string name="connection_details_unavailable">暂时无法获取连接信息。</string>
     <string name="root_epdg_targets_summary">填写逗号分隔的公网 ePDG 地址。高通设备可输入 freedom=208.98.222.239，启用 Freedom 专用 DNS、IKE 和 ESP 中继。</string>
+    <string name="freedom_epdg_endpoint">Freedom Wi-Fi 通话网关</string>
+    <string name="freedom_epdg_endpoint_summary">填写此配置使用的 ePDG IPv4 地址。已验证的 Staff VPN 可填 208.98.222.239。需要 Root，支持 Global 模式。</string>
+    <string name="freedom_relay_ready">Freedom 中继就绪，等待 ePDG 流量</string>
+    <string name="freedom_relay_dns">已向基带返回 Freedom ePDG 地址</string>
+    <string name="freedom_relay_ike">已收到 Freedom IKE 回包</string>
+    <string name="freedom_relay_esp">已确认 Freedom ESP 双向流量</string>
+    <string name="freedom_ims_wifi">Freedom Wi-Fi 通话可用</string>
+    <string name="freedom_ims_waiting">Freedom Wi-Fi 通话尚未可用</string>
+    <string name="freedom_ims_unknown">暂无法读取 Freedom Wi-Fi 通话状态</string>
 </resources>

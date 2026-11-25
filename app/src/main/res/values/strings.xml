@@ -320,6 +320,10 @@
     <string name="connection_details_title">Connection details</string>
     <string name="connection_details_unavailable">Connection information is unavailable.</string>
     <string name="root_epdg_title">Root ePDG mode (experimental)</string>
+    <string name="connection_mode_title">VPN routing mode</string>
+    <string name="connection_mode_global">Global VPN (server routes)</string>
+    <string name="connection_mode_vowifi">Wi-Fi Calling only (root)</string>
+    <string name="connection_mode_reconnect">Reconnect to apply the routing mode.</string>
     <string name="root_epdg_summary">Requires root and direct Wi-Fi. Route only selected IPv4 IKE traffic without establishing an Android VPN. Disconnect and reconnect to apply.</string>
     <string name="root_epdg_targets_title">ePDG hostnames / IPv4 addresses</string>
     <string name="root_epdg_targets_summary">Comma-separated public ePDG addresses. On Qualcomm, enter freedom=208.98.222.239 to use the Freedom-specific DNS, IKE and ESP relay.</string>
@@ -332,4 +336,13 @@
     <string name="root_check_failed">Root check failed: %1$s</string>
     <string name="ensure_tun_title">Ensure TUN support</string>
     <string name="ensure_tun_summary">Requires root. Reuse the existing TUN driver or try a device-provided tun.ko if the driver is absent. Root ePDG mode checks automatically regardless of this switch.</string>
+    <string name="freedom_epdg_endpoint">Freedom Wi-Fi Calling endpoint</string>
+    <string name="freedom_epdg_endpoint_summary">Optional IPv4 address for this profile. Enter 208.98.222.239 for the tested Staff VPN path. Requires root and also works in Global mode.</string>
+    <string name="freedom_relay_ready">Freedom relay ready · waiting for ePDG traffic</string>
+    <string name="freedom_relay_dns">Freedom ePDG DNS reply delivered</string>
+    <string name="freedom_relay_ike">Freedom IKE response received</string>
+    <string name="freedom_relay_esp">Freedom ESP traffic confirmed in both directions</string>
+    <string name="freedom_ims_wifi">Freedom Wi-Fi Calling available</string>
+    <string name="freedom_ims_waiting">Freedom Wi-Fi Calling not available yet</string>
+    <string name="freedom_ims_unknown">Freedom Wi-Fi Calling status unavailable</string>
 </resources>

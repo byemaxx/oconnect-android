@@ -42,14 +42,22 @@ public final class RootAccess {
         return runProbe(context, "--ensure-tun");
     }
 
-    private static String runProbe(Context context, String mode) throws IOException {
+    static void checkFreedom(Context context, String wifi) throws IOException {
+        runProbe(context, "--probe-freedom", wifi);
+    }
+
+    private static String runProbe(Context context, String mode, String... extra) throws IOException {
         if (Build.VERSION.SDK_INT < 26) {
             throw new IOException("Root ePDG mode requires Android 8 or newer");
         }
         String path = helperPath(context);
         Process process;
         try {
-            process = start(path, mode);
+            String[] args = new String[extra.length + 2];
+            args[0] = path;
+            args[1] = mode;
+            System.arraycopy(extra, 0, args, 2, extra.length);
+            process = start(args);
         } catch (IOException e) {
             throw new IOException("Cannot launch su: " + e.getMessage(), e);
         }
@@ -66,7 +74,8 @@ public final class RootAccess {
                 }
             }
             String result = output.toString().trim();
-            if (process.exitValue() != 0 || !result.contains("ROOT_TUN_PROBE_OK")) {
+            String expected = "--probe-freedom".equals(mode) ? "FREEDOM_PROBE_OK" : "ROOT_TUN_PROBE_OK";
+            if (process.exitValue() != 0 || !result.contains(expected)) {
                 throw new IOException("Root/TUN check failed (exit " + process.exitValue()
                         + "): " + (result.isEmpty() ? "Check KernelSU app permission and profile." : result));
             }

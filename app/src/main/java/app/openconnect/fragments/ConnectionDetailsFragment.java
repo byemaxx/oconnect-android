@@ -70,6 +70,17 @@ public class ConnectionDetailsFragment extends Fragment {
 						? getString(R.string.dashboard_disconnected)
 						: service.getConnectionStateName());
 		setNetworkFieldsVisible(connected);
+		int stage = connected ? service.getFreedomRelayStage() : 0;
+		mView.findViewById(R.id.details_freedom).setVisibility(stage == 0 ? View.GONE : View.VISIBLE);
+		if (stage > 0) {
+			service.checkFreedomIms();
+			int[] relay = {0, R.string.freedom_relay_ready, R.string.freedom_relay_dns,
+					R.string.freedom_relay_ike, R.string.freedom_relay_esp};
+			int ims = service.getFreedomIms();
+			writeText(R.id.details_freedom, getString(relay[stage]) + "\n" + getString(
+					ims == 2 ? R.string.freedom_ims_wifi : ims == 1
+							? R.string.freedom_ims_waiting : R.string.freedom_ims_unknown));
+		}
 
 		if (connected && service.startTime != null) {
 			writeText(R.id.details_connection_time, getString(

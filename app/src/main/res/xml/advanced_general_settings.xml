@@ -39,12 +39,14 @@
     <PreferenceCategory
             android:layout="@layout/preference_category_header"
             android:title="@string/root_epdg_category">
-        <SwitchPreference
-                android:defaultValue="false"
-                android:key="root_epdg_enabled"
+        <ListPreference
+                android:key="connection_mode"
+                android:persistent="false"
+                android:entries="@array/connection_mode_labels"
+                android:entryValues="@array/connection_mode_values"
                 android:layout="@layout/preference_standard_compact"
-                android:title="@string/root_epdg_title"
-                android:summary="@string/root_epdg_summary" />
+                android:title="@string/connection_mode_title"
+                android:summary="%s" />
         <Preference
                 android:key="root_epdg_check"
                 android:layout="@layout/preference_standard_compact"
@@ -53,7 +55,6 @@
         <EditTextPreference
                 android:defaultValue="epdg.epc.mnc490.mcc302.pub.3gppnetwork.org"
                 android:key="root_epdg_targets"
-                android:dependency="root_epdg_enabled"
                 android:layout="@layout/preference_standard_compact"
                 android:title="@string/root_epdg_targets_title"
                 android:summary="@string/root_epdg_targets_summary"

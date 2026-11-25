@@ -399,6 +399,31 @@ public class AuthFormHandler extends UserDialog
 		return message;
 	}
 
+	private String credentialField(String field) {
+		return getStringPref("profile_uuid") + ":" + field;
+	}
+
+	private String savedAnswer(LibOpenConnect.FormOpt opt) {
+		if (noSave) return "";
+		String field = formPfx + getOptDigest(opt);
+		String value = getStringPref(field);
+		if (opt.type != LibOpenConnect.OC_FORM_OPT_PASSWORD || value.isEmpty()) return value;
+		if (!"true".equals(getStringPref(formPfx + "savePass"))) {
+			setStringPref(field, "");
+			return "";
+		}
+		try {
+			if (value.startsWith(CredentialStore.PREFIX)) {
+				return CredentialStore.open(value, credentialField(field));
+			}
+			setStringPref(field, CredentialStore.seal(value, credentialField(field)));
+			return value;
+		} catch (Exception e) {
+			setStringPref(field, "");
+			return "";
+		}
+	}
+
 	private void saveAndStore() {
 		for (LibOpenConnect.FormOpt opt : mForm.opts) {
 			if ((opt.flags & LibOpenConnect.OC_FORM_OPT_IGNORE) != 0) {
@@ -419,7 +444,16 @@ public class AuthFormHandler extends UserDialog
 				String s = tv.getText().toString();
 				if (savePassword != null) {
 					boolean checked = savePassword.isChecked();
-					setStringPref(formPfx + getOptDigest(opt), checked ? s : "");
+					String field = formPfx + getOptDigest(opt);
+					String stored = "";
+					if (checked) {
+						try {
+							stored = CredentialStore.seal(s, credentialField(field));
+						} catch (Exception e) {
+							checked = false;
+						}
+					}
+					setStringPref(field, stored);
 					setStringPref(formPfx + "savePass", checked ? "true" : "false");
 				}
 				opt.value = s;
@@ -488,7 +522,7 @@ public class AuthFormHandler extends UserDialog
 			switch (opt.type) {
 			case LibOpenConnect.OC_FORM_OPT_PASSWORD:
 			case LibOpenConnect.OC_FORM_OPT_TEXT:
-				String defval = noSave ? "" : getStringPref(formPfx + getOptDigest(opt));
+				String defval = savedAnswer(opt);
 				if (defval.equals("")) {
 					return null;
 				}
@@ -541,7 +575,7 @@ public class AuthFormHandler extends UserDialog
 				hasPassword = true;
 				/* falls through */
 			case LibOpenConnect.OC_FORM_OPT_TEXT:
-				defval = noSave ? "" : getStringPref(formPfx + getOptDigest(opt));
+				defval = savedAnswer(opt);
 				if (defval.equals("")) {
 					if (opt.value != null && !opt.value.equals("")) {
 						defval = opt.value;
@@ -578,7 +612,7 @@ public class AuthFormHandler extends UserDialog
 		}
 		if (hasPassword) {
 			if (!noSave) {
-				boolean savePass = !getStringPref(formPfx + "savePass").equals("false");
+				boolean savePass = "true".equals(getStringPref(formPfx + "savePass"));
 				savePassword = newSavePasswordView(savePass);
 				automaticLogin = newAutomaticLoginView(
 						batchMode == BATCH_MODE_EMPTY_ONLY || batchMode == BATCH_MODE_ENABLED);

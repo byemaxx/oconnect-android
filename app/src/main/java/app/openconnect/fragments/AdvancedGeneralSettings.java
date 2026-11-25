@@ -49,13 +49,20 @@ public class AdvancedGeneralSettings extends PreferenceFragment
             }
         }
 
-        Preference rootMode = findPreference("root_epdg_enabled");
+        ListPreference connectionMode = (ListPreference) findPreference("connection_mode");
+        Preference targets = findPreference("root_epdg_targets");
         Preference rootCheck = findPreference("root_epdg_check");
-        if (rootMode != null) {
-            // Never gate this switch on a tun.ko file or a cached authorization.
-            rootMode.setEnabled(true);
-            rootMode.setOnPreferenceChangeListener((preference, newValue) -> {
-                if (Boolean.TRUE.equals(newValue)) checkRootAccess();
+        if (connectionMode != null) {
+            SharedPreferences prefs = getPreferenceScreen().getSharedPreferences();
+            boolean voWifi = prefs.getBoolean("root_epdg_enabled", false);
+            connectionMode.setValue(voWifi ? "vowifi" : "global");
+            if (targets != null) targets.setEnabled(voWifi);
+            connectionMode.setOnPreferenceChangeListener((preference, newValue) -> {
+                boolean enableVoWifi = "vowifi".equals(newValue);
+                prefs.edit().putBoolean("root_epdg_enabled", enableVoWifi).apply();
+                if (targets != null) targets.setEnabled(enableVoWifi);
+                if (enableVoWifi) checkRootAccess();
+                Toast.makeText(getActivity(), R.string.connection_mode_reconnect, Toast.LENGTH_SHORT).show();
                 return true;
             });
         }

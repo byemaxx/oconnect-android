@@ -7,6 +7,7 @@ import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
 import android.net.LocalSocket;
@@ -42,12 +43,24 @@ import java.util.concurrent.TimeUnit;
 final class RootTunnel implements AutoCloseable {
     static final String ENABLED = "root_epdg_enabled";
     static final String TARGETS = "root_epdg_targets";
+    static final String PROFILE_ENDPOINT = "freedom_epdg_endpoint";
     static final String DEFAULT_TARGET = "epdg.epc.mnc490.mcc302.pub.3gppnetwork.org";
     private static final String TAG = "OConnectRoot";
     private static final int MAX_TARGETS = 8;
     private LocalSocket control;
     private ParcelFileDescriptor tun;
     private java.lang.Process helper;
+    private volatile int freedomStage;
+    private volatile Runnable failureCallback;
+
+    void watchFailure(Runnable callback) {
+        failureCallback = callback;
+        if (!helper.isAlive()) callback.run();
+    }
+
+    int getFreedomStage() {
+        return freedomStage;
+    }
 
     private static Uplink activeUplink;
 
@@ -70,6 +83,7 @@ final class RootTunnel implements AutoCloseable {
         final Set<String> targets;
         final String interfaceName;
         final boolean freedomRelay;
+        private ConnectivityManager.NetworkCallback callback;
 
         private Uplink(ConnectivityManager cm, Network network, Network previous,
                 Set<String> targets, String interfaceName, boolean freedomRelay) {
@@ -90,9 +104,40 @@ final class RootTunnel implements AutoCloseable {
             }
         }
 
+        void watch(Runnable changed) {
+            LinkProperties current = cm.getLinkProperties(network);
+            if (current == null) {
+                changed.run();
+                return;
+            }
+            callback = new ConnectivityManager.NetworkCallback() {
+                @Override
+                public void onLost(Network candidate) {
+                    if (network.equals(candidate)) changed.run();
+                }
+
+                @Override
+                public void onLinkPropertiesChanged(Network candidate, LinkProperties links) {
+                    if (network.equals(candidate) &&
+                            (!java.util.Objects.equals(ipv4Address(current), ipv4Address(links))
+                            || !current.getDnsServers().equals(links.getDnsServers())
+                            || !java.util.Objects.equals(current.getInterfaceName(), links.getInterfaceName()))) {
+                        changed.run();
+                    }
+                }
+            };
+            cm.registerNetworkCallback(new NetworkRequest.Builder()
+                    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build(), callback);
+        }
+
         @Override
         public void close() {
             synchronized (RootTunnel.class) {
+                if (callback != null) {
+                    try { cm.unregisterNetworkCallback(callback); } catch (IllegalArgumentException ignored) {}
+                    callback = null;
+                }
                 if (activeUplink != this) return;
                 try {
                     if (network.equals(cm.getBoundNetworkForProcess())
@@ -107,6 +152,28 @@ final class RootTunnel implements AutoCloseable {
                 }
             }
         }
+    }
+
+    private static String ipv4Address(LinkProperties links) {
+        if (links == null) return null;
+        for (LinkAddress address : links.getLinkAddresses()) {
+            if (address.getAddress() instanceof Inet4Address) return address.getAddress().getHostAddress();
+        }
+        return null;
+    }
+
+    static boolean hasWifi(Context context) {
+        ConnectivityManager cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm == null) return false;
+        for (Network candidate : cm.getAllNetworks()) {
+            if (!isWifi(cm.getNetworkCapabilities(candidate))) continue;
+            LinkProperties links = cm.getLinkProperties(candidate);
+            if (links == null) continue;
+            for (LinkAddress address : links.getLinkAddresses()) {
+                if (address.getAddress() instanceof Inet4Address) return true;
+            }
+        }
+        return false;
     }
 
     static synchronized Uplink prepareUplink(Context context, String targets)
@@ -209,6 +276,12 @@ final class RootTunnel implements AutoCloseable {
 
     static RootTunnel open(Context context, LibOpenConnect.IPInfo ip, Uplink uplink)
             throws Exception {
+        return open(context, ip, uplink, null);
+    }
+
+    static RootTunnel open(Context context, LibOpenConnect.IPInfo ip, Uplink uplink,
+                           ParcelFileDescriptor androidTun) throws Exception {
+        boolean global = androidTun != null;
         // Do not re-evaluate the default network after CSTP authentication.
         // The preflight-selected physical Wi-Fi must still be usable.
         uplink.verifyAvailable();
@@ -216,7 +289,15 @@ final class RootTunnel implements AutoCloseable {
             throw new IOException("VPN server did not assign an IPv4 address");
         }
         // Do not replace server-selected split routes with an unrestricted tunnel.
-        if (ip.splitIncludes != null && !ip.splitIncludes.isEmpty()) {
+        if (global) {
+            try {
+                if (!Ipv4RoutePolicy.allows(uplink.targets.iterator().next(), ip.splitIncludes, ip.splitExcludes)) {
+                    throw new IOException("VPN server routes exclude the configured Freedom endpoint");
+                }
+            } catch (IllegalArgumentException e) {
+                throw new IOException("Cannot validate server routes for Freedom relay", e);
+            }
+        } else if (ip.splitIncludes != null && !ip.splitIncludes.isEmpty()) {
             throw new IOException("Root ePDG mode currently requires a full IPv4 VPN");
         }
         InetAddress vpnAddress = InetAddress.getByName(ip.addr);
@@ -241,13 +322,7 @@ final class RootTunnel implements AutoCloseable {
             if (links == null || !uplink.interfaceName.equals(links.getInterfaceName())) {
                 throw new IOException("Wi-Fi link changed before Freedom relay setup");
             }
-            String wifiAddress = null;
-            for (LinkAddress address : links.getLinkAddresses()) {
-                if (address.getAddress() instanceof Inet4Address) {
-                    wifiAddress = address.getAddress().getHostAddress();
-                    break;
-                }
-            }
+            String wifiAddress = ipv4Address(links);
             if (wifiAddress == null) throw new IOException("Freedom relay requires Wi-Fi IPv4");
             String dns4 = "-", dns6 = "-";
             for (InetAddress dns : links.getDnsServers()) {
@@ -260,7 +335,8 @@ final class RootTunnel implements AutoCloseable {
             if (dns4.equals("-") && dns6.equals("-")) {
                 throw new IOException("Freedom relay requires Wi-Fi IPv4 or link-local IPv6 DNS");
             }
-            Collections.addAll(args, "--freedom-relay", uplink.interfaceName, wifiAddress, dns4, dns6);
+            Collections.addAll(args, global ? "--freedom-global" : "--freedom-relay",
+                    uplink.interfaceName, wifiAddress, dns4, dns6);
         }
         args.addAll(resolved);
         RootTunnel result = new RootTunnel();
@@ -272,9 +348,21 @@ final class RootTunnel implements AutoCloseable {
                 try (BufferedReader reader = new BufferedReader(
                         new InputStreamReader(proc.getInputStream()))) {
                     String line;
-                    while ((line = reader.readLine()) != null) Log.i(TAG, line);
+                    while ((line = reader.readLine()) != null) {
+                        if (line.equals("Freedom-stage dns")) {
+                            result.freedomStage = Math.max(result.freedomStage, 2);
+                        } else if (line.equals("Freedom-stage ike")) {
+                            result.freedomStage = Math.max(result.freedomStage, 3);
+                        } else if (line.equals("Freedom-stage esp")) {
+                            result.freedomStage = 4;
+                        }
+                        Log.i(TAG, line);
+                    }
                 } catch (IOException e) {
                     Log.d(TAG, "Helper output closed", e);
+                } finally {
+                    Runnable failed = result.failureCallback;
+                    if (failed != null) failed.run();
                 }
             }, "RootTunLog");
             logger.setDaemon(true);
@@ -300,8 +388,17 @@ final class RootTunnel implements AutoCloseable {
                 throw new IOException("Root helper peer UID is not zero");
             }
             result.control.setSoTimeout(60000);
+            if (global) {
+                result.control.setFileDescriptorsForSend(new FileDescriptor[]{androidTun.getFileDescriptor()});
+                result.control.getOutputStream().write(1);
+            }
             if (result.control.getInputStream().read() != 1) {
                 throw new IOException("Root helper failed to configure tunnel; check logcat");
+            }
+            if (uplink.freedomRelay && result.freedomStage == 0) result.freedomStage = 1;
+            if (global) {
+                success = true;
+                return result;
             }
             FileDescriptor[] descriptors = result.control.getAncillaryFileDescriptors();
             if (descriptors == null || descriptors.length != 1) {
@@ -331,6 +428,7 @@ final class RootTunnel implements AutoCloseable {
 
     @Override
     public void close() {
+        failureCallback = null;
         // Closing the control socket tells the helper to delete only its own rules.
         // It also receives EOF if Android kills the app process.
         if (control != null) {

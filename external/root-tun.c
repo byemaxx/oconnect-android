@@ -6,11 +6,14 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/fib_rules.h>
 #include <linux/if_tun.h>
+#include <linux/rtnetlink.h>
 #include <net/if.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,7 +29,7 @@
 #define MAX_TARGETS 8
 #define IP "/system/bin/ip"
 #define IPT "/system/bin/iptables"
-#define PREF "10500"
+#define PREF 10500
 
 static volatile sig_atomic_t stopped;
 static void stop_signal(int sig) { (void)sig; stopped = 1; }
@@ -60,11 +63,73 @@ int root_command(const char *path, ...) {
     return 0;
 }
 
-static int rule(const char *action, const char *target,
-                const char *port, const char *table) {
-    return root_command(IP, "-4", "rule", action, "pref", PREF, "iif", "lo",
-                   "to", target, "ipproto", "udp", "dport", port,
-                   "lookup", table, (char *)NULL);
+static void rule_attr(struct nlmsghdr *msg, unsigned type, const void *data, size_t size) {
+    struct rtattr *attr = (void *)((char *)msg + NLMSG_ALIGN(msg->nlmsg_len));
+    attr->rta_type = type;
+    attr->rta_len = RTA_LENGTH(size);
+    memcpy(RTA_DATA(attr), data, size);
+    msg->nlmsg_len = NLMSG_ALIGN(msg->nlmsg_len) + RTA_ALIGN(attr->rta_len);
+}
+
+static int rule(int add, struct in_addr target, uint16_t port, uint32_t table) {
+    // Android's bundled ip may not parse ipproto/dport even when the kernel supports them.
+    struct {
+        struct nlmsghdr header;
+        struct fib_rule_hdr rule;
+        char attrs[64];
+    } request = {
+        .header = {.nlmsg_len = NLMSG_LENGTH(sizeof(struct fib_rule_hdr)),
+                   .nlmsg_type = add ? RTM_NEWRULE : RTM_DELRULE,
+                   .nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK | (add ? NLM_F_CREATE | NLM_F_EXCL : 0),
+                   .nlmsg_seq = 1},
+        .rule = {.family = AF_INET, .dst_len = 32, .action = FR_ACT_TO_TBL}
+    };
+    const uint32_t priority = PREF;
+    const uint8_t protocol = IPPROTO_UDP;
+    const struct fib_rule_port_range range = {.start = port, .end = port};
+    rule_attr(&request.header, FRA_DST, &target, sizeof(target));
+    rule_attr(&request.header, FRA_IIFNAME, "lo", sizeof("lo"));
+    rule_attr(&request.header, FRA_PRIORITY, &priority, sizeof(priority));
+    rule_attr(&request.header, FRA_TABLE, &table, sizeof(table));
+    rule_attr(&request.header, FRA_IP_PROTO, &protocol, sizeof(protocol));
+    rule_attr(&request.header, FRA_DPORT_RANGE, &range, sizeof(range));
+
+    int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+    if (fd < 0) {
+        perror("routing netlink");
+        return -1;
+    }
+    struct sockaddr_nl kernel = {.nl_family = AF_NETLINK};
+    struct pollfd ready = {.fd = fd, .events = POLLIN};
+    struct {
+        struct nlmsghdr header;
+        struct nlmsgerr error;
+        char attrs[256];
+    } reply;
+    int error = 0;
+    if (sendto(fd, &request, request.header.nlmsg_len, 0,
+               (struct sockaddr *)&kernel, sizeof(kernel)) < 0) {
+        error = errno;
+    } else {
+        int rc = poll(&ready, 1, 3000);
+        if (rc <= 0) {
+            error = rc == 0 ? ETIMEDOUT : errno;
+        } else {
+            ssize_t len = recv(fd, &reply, sizeof(reply), 0);
+            if (len < 0) error = errno;
+            else if ((size_t)len < NLMSG_LENGTH(sizeof(reply.error)) ||
+                     reply.header.nlmsg_type != NLMSG_ERROR || reply.header.nlmsg_seq != 1)
+                error = EPROTO;
+            else error = -reply.error.error;
+        }
+    }
+    close(fd);
+    if (error) {
+        fprintf(stderr, "Cannot %s UDP %u route rule: %s\n", add ? "add" : "remove",
+                (unsigned)port, strerror(error));
+        return -1;
+    }
+    return 0;
 }
 
 static int nat(const char *action, const char *dev, const char *target,
@@ -207,6 +272,30 @@ static int ensure_tun(void) {
     return 11;
 }
 
+static int receive_tun(int sock, struct ifreq *ifr) {
+    struct pollfd wait = {.fd = sock, .events = POLLIN};
+    if (poll(&wait, 1, 10000) != 1) return -1;
+    char byte;
+    struct iovec payload = {.iov_base = &byte, .iov_len = 1};
+    union { struct cmsghdr align; char buf[CMSG_SPACE(sizeof(int))]; } ancillary;
+    struct msghdr msg = {.msg_iov = &payload, .msg_iovlen = 1,
+        .msg_control = ancillary.buf, .msg_controllen = sizeof(ancillary.buf)};
+    if (recvmsg(sock, &msg, MSG_CMSG_CLOEXEC) != 1) return -1;
+    int fd = -1;
+    struct cmsghdr *header = CMSG_FIRSTHDR(&msg);
+    if (header && header->cmsg_level == SOL_SOCKET && header->cmsg_type == SCM_RIGHTS &&
+        header->cmsg_len == CMSG_LEN(sizeof(fd))) {
+        memcpy(&fd, CMSG_DATA(header), sizeof(fd));
+    }
+    if (fd < 0) return -1;
+    if (byte != 1 || (msg.msg_flags & MSG_CTRUNC) || ioctl(fd, TUNGETIFF, ifr) ||
+        !(ifr->ifr_flags & IFF_TUN)) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--probe") == 0) return probe();
     if (argc == 2 && strcmp(argv[1], "--ensure-tun") == 0) return ensure_tun();
@@ -214,6 +303,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "su did not grant UID 0\n");
         return 10;
     }
+    if (argc == 3 && strcmp(argv[1], "--probe-freedom") == 0) return epdg_relay_probe(argv[2]);
     if (argc < 6 || argc > 5 + MAX_TARGETS) return 2;
     const char *name = argv[1];
     const char *prefix = "oconnect-root-";
@@ -225,6 +315,7 @@ int main(int argc, char **argv) {
     if (number(argv[2], 10000, 2147483647L, &uid) ||
         number(argv[4], 576, 9000, &mtu)) return 2;
     char address[INET_ADDRSTRLEN], cidr[32], targets[MAX_TARGETS][32];
+    struct in_addr target_ips[MAX_TARGETS];
     const char *slash = strchr(argv[3], '/');
     struct in_addr tmp;
     if (!slash || slash - argv[3] >= (long)sizeof(address) || slash == argv[3])
@@ -234,12 +325,13 @@ int main(int argc, char **argv) {
     if (inet_pton(AF_INET, address, &tmp) != 1 ||
         number(slash + 1, 0, 32, &bits)) return 2;
     snprintf(cidr, sizeof(cidr), "%s/%ld", address, bits);
-    int freedom = strcmp(argv[5], "--freedom-relay") == 0;
+    int global = strcmp(argv[5], "--freedom-global") == 0;
+    int freedom = global || strcmp(argv[5], "--freedom-relay") == 0;
     if (freedom && argc != 11) return 2;
     int target_arg = freedom ? 10 : 5;
     int count = argc - target_arg;
     for (int i = 0; i < count; i++) {
-        if (inet_pton(AF_INET, argv[i + target_arg], &tmp) != 1) return 2;
+        if (inet_pton(AF_INET, argv[i + target_arg], &target_ips[i]) != 1) return 2;
         snprintf(targets[i], sizeof(targets[i]), "%s/32", argv[i + target_arg]);
     }
     char table[16], dev[IFNAMSIZ];
@@ -247,7 +339,8 @@ int main(int argc, char **argv) {
     char hex[7] = {0};
     memcpy(hex, name + prefix_len, 6);
     unsigned long token = strtoul(hex, NULL, 16);
-    snprintf(table, sizeof(table), "%lu", 100000UL + token);
+    uint32_t table_id = 100000UL + token;
+    snprintf(table, sizeof(table), "%u", table_id);
     snprintf(dev, sizeof(dev), "acv%s", hex);
     if (if_nametoindex(dev)) return 2;
     struct epdg_relay relay = {.vpn = address, .table = table, .tunnel = dev};
@@ -264,6 +357,7 @@ int main(int argc, char **argv) {
     int listener = -1, client = -1, tun = -1, route_added = 0, rc = 1;
     int rules[MAX_TARGETS][2] = {{0}}, nats[MAX_TARGETS][2] = {{0}};
     const char *ports[] = {"500", "4500"};
+    const uint16_t port_numbers[] = {500, 4500};
     struct sockaddr_un addr = {0};
     addr.sun_family = AF_UNIX;
     memcpy(addr.sun_path + 1, name, strlen(name));
@@ -289,16 +383,25 @@ int main(int argc, char **argv) {
     close(listener);
     listener = -1;
 
-    tun = open_tun();
-    if (tun < 0) { perror("open TUN"); goto done; }
     struct ifreq ifr = {0};
-    ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
-    snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "%s", dev);
-    if (ioctl(tun, TUNSETIFF, &ifr)) { perror("TUNSETIFF"); goto done; }
-
-    if (root_command(IP, "-4", "addr", "add", cidr, "dev", dev, (char *)NULL) ||
-        root_command(IP, "link", "set", "dev", dev, "mtu", argv[4], "up", (char *)NULL) ||
-        root_command(IP, "-4", "route", "add", "default", "dev", dev, "src", address,
+    if (global) {
+        tun = receive_tun(client, &ifr);
+        if (tun < 0) {
+            fprintf(stderr, "Cannot identify Android VPN TUN descriptor\n");
+            goto done;
+        }
+        snprintf(dev, sizeof(dev), "%s", ifr.ifr_name);
+    } else {
+        tun = open_tun();
+        if (tun < 0) { perror("open TUN"); goto done; }
+        ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
+        snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "%s", dev);
+        if (ioctl(tun, TUNSETIFF, &ifr)) { perror("TUNSETIFF"); goto done; }
+        if (root_command(IP, "-4", "addr", "add", cidr, "dev", dev, (char *)NULL) ||
+            root_command(IP, "link", "set", "dev", dev, "mtu", argv[4], "up", (char *)NULL))
+            goto done;
+    }
+    if (root_command(IP, "-4", "route", "add", "default", "dev", dev, "src", address,
                 "table", table, (char *)NULL)) goto done;
     route_added = 1;
 
@@ -308,11 +411,15 @@ int main(int argc, char **argv) {
         for (int j = 0; j < 2; j++) {
             if (stopped || nat("-A", dev, targets[i], ports[j], address)) goto done;
             nats[i][j] = 1;
-            if (rule("add", targets[i], ports[j], table)) goto done;
+            if (rule(1, target_ips[i], port_numbers[j], table_id)) goto done;
             rules[i][j] = 1;
         }
     }
-    if (stopped || send_tun(client, tun)) goto done;
+    if (global) {
+        close(tun);
+        tun = -1;
+        if (stopped || send(client, "\1", 1, MSG_NOSIGNAL) != 1) goto done;
+    } else if (stopped || send_tun(client, tun)) goto done;
     fprintf(stderr, "Root TUN ready: %s, table %s, IPv4 targets %d\n", dev, table, count);
 
     /* EOF or peer death triggers cleanup. The TUN is never made persistent. */
@@ -332,7 +439,7 @@ done:
     if (freedom) epdg_relay_stop(&relay);
     for (int i = count - 1; i >= 0; i--) {
         for (int j = 1; j >= 0; j--) {
-            if (rules[i][j]) rule("del", targets[i], ports[j], table);
+            if (rules[i][j]) rule(0, target_ips[i], port_numbers[j], table_id);
             if (nats[i][j]) nat("-D", dev, targets[i], ports[j], address);
         }
     }

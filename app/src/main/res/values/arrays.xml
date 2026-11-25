@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string-array name="connection_mode_labels">
+        <item>@string/connection_mode_global</item>
+        <item>@string/connection_mode_vowifi</item>
+    </string-array>
+    <string-array name="connection_mode_values" translatable="false">
+        <item>global</item>
+        <item>vowifi</item>
+    </string-array>
 
     <string-array name="software_token_entries">
         <item>Disabled</item>

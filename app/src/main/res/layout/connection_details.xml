@@ -42,6 +42,15 @@
                 tools:text="Connected for 12:43" />
 
             <TextView
+                android:id="@+id/details_freedom"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="?attr/colorOnSurface"
+                android:visibility="gone" />
+
+            <TextView
                 android:id="@+id/details_traffic"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

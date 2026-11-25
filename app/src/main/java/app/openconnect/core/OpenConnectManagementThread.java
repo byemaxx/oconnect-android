@@ -86,11 +86,15 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 	private HashMap<String,Boolean> mRejectedCerts = new HashMap<String,Boolean>();
 	private boolean mAuthDone = false;
 	private final boolean mRootMode;
-	private RootTunnel mRootTunnel;
+	private final String mFreedomEndpoint;
+	private volatile RootTunnel mRootTunnel;
+	private volatile int mFreedomIms;
+	private long mNextFreedomImsCheck;
 	private RootTunnel.Uplink mRootUplink;
 
 	private boolean mRequestPause;
 	private volatile boolean mRequestDisconnect;
+	private volatile boolean mRestartAfterWifiChange;
 	private Object mMainloopLock = new Object();
 
     public OpenConnectManagementThread(Context context, VpnProfile profile, OpenVpnService openVpnService) {
@@ -100,6 +104,7 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 		mPrefs = mProfile.mPrefs;
 		mAppPrefs = PreferenceManager.getDefaultSharedPreferences(mContext);
 		mRootMode = mAppPrefs.getBoolean(RootTunnel.ENABLED, false);
+		mFreedomEndpoint = mPrefs.getString(RootTunnel.PROFILE_ENDPOINT, "").trim();
 	}
 
     private String getStringPref(final String key) {
@@ -735,14 +740,20 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 			mOC = new AndroidOC();
 		}
 
-		if (mRootMode) {
+		if (mRootMode || !mFreedomEndpoint.isEmpty()) {
 			try {
-				mRootUplink = RootTunnel.prepareUplink(mContext,
-						mAppPrefs.getString(RootTunnel.TARGETS, RootTunnel.DEFAULT_TARGET));
+				if (!mRootMode && getStringPref("split_tunnel_mode").startsWith("on_")) {
+					throw new IOException("Freedom relay requires the VPN server's full routes");
+				}
+				String targets = mFreedomEndpoint.isEmpty()
+						? mAppPrefs.getString(RootTunnel.TARGETS, RootTunnel.DEFAULT_TARGET)
+						: "freedom=" + mFreedomEndpoint;
+				mRootUplink = RootTunnel.prepareUplink(mContext, targets);
 				log("ROOT: selected Wi-Fi " + mRootUplink.interfaceName
 						+ " before authentication");
 				// Root mode always verifies TUN, independent of the legacy switch.
 				log("ROOT: " + RootAccess.ensureTun(mContext));
+				if (mRootUplink.freedomRelay) RootAccess.checkFreedom(mContext, mRootUplink.interfaceName);
 			} catch (IOException | RuntimeException e) {
 				log("ROOT: " + e.getMessage());
 				if (!mRequestDisconnect) errorAlert(e.getMessage());
@@ -801,11 +812,19 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 				setIPInfo(b);
 				pfd = b.establish();
 				if (pfd == null) throw new IOException("VPN permission or establish failed");
+				if (!mFreedomEndpoint.isEmpty()) {
+					mRootTunnel = RootTunnel.open(mContext, mOC.getIPInfo(), mRootUplink, pfd);
+					log("ROOT: Freedom relay attached to Global VPN");
+				}
 				fd = pfd.getFd();
 			}
 			if (mOC.setupTunFD(fd) != 0) throw new IOException("Error setting up tunnel fd");
 			setState(STATE_CONNECTED);
-		updateStatPref("connect");
+			if (mRootUplink != null && mAppPrefs.getBoolean("netchangereconnect", true)) {
+				mRootUplink.watch(this::restartAfterWifiChange);
+				if (mRootTunnel != null) mRootTunnel.watchFailure(this::restartAfterWifiChange);
+			}
+			updateStatPref("connect");
 
 		mOC.setupDTLS(60);
 
@@ -833,14 +852,67 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 			if (!mRequestDisconnect) errorAlert(String.valueOf(e.getMessage()));
 			return false;
 		} finally {
-			if (pfd != null) {
-				try { pfd.close(); } catch (IOException ignored) {}
-			}
 			if (mRootTunnel != null) {
 				mRootTunnel.close();
 				mRootTunnel = null;
 			}
+			if (pfd != null) {
+				try { pfd.close(); } catch (IOException ignored) {}
+			}
 		}
+	}
+
+	int getFreedomRelayStage() {
+		RootTunnel active = mRootTunnel;
+		return active == null ? 0 : active.getFreedomStage();
+	}
+
+	int getFreedomIms() {
+		return mFreedomIms;
+	}
+
+	void checkFreedomIms() {
+		if (getFreedomRelayStage() == 0 || android.os.SystemClock.elapsedRealtime() < mNextFreedomImsCheck) return;
+		mNextFreedomImsCheck = android.os.SystemClock.elapsedRealtime() + 10000;
+		new Thread(() -> {
+			Process probe = null;
+			try {
+				probe = RootAccess.start("/system/bin/env", "CLASSPATH=" + mContext.getApplicationInfo().sourceDir,
+						"/system/bin/app_process", "/", FreedomImsProbe.class.getName());
+				if (probe.waitFor(4, java.util.concurrent.TimeUnit.SECONDS)) {
+					try (java.io.BufferedReader reader = new java.io.BufferedReader(
+							new java.io.InputStreamReader(probe.getInputStream()))) {
+						String value = reader.readLine();
+						mFreedomIms = "IMS_WIFI".equals(value) ? 2 : "IMS_WAITING".equals(value) ? 1 : 0;
+					}
+				} else {
+					mFreedomIms = 0;
+				}
+			} catch (IOException e) {
+				mFreedomIms = 0;
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			} finally {
+				if (probe != null) probe.destroy();
+			}
+			mOpenVPNService.updateFreedomDetails(this);
+		}, "FreedomImsStatus").start();
+	}
+
+	private void restartAfterWifiChange() {
+		synchronized (mMainloopLock) {
+			if (mRequestDisconnect || mOC == null) return;
+			mRestartAfterWifiChange = true;
+			stopVPN();
+		}
+	}
+
+	boolean shouldRestartAfterWifiChange() {
+		return mRestartAfterWifiChange;
+	}
+
+	void cancelWifiRestart() {
+		mRestartAfterWifiChange = false;
 	}
 
 	public boolean isRootMode() {

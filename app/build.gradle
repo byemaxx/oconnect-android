@@ -65,7 +65,7 @@ dependencies {
     implementation fileTree(
             dir: 'libs',
             include: ['*.jar'],
-            exclude: ['openconnect-wrapper.jar', 'stoken-wrapper.jar'])
+            exclude: ['openconnect-wrapper.jar', 'stoken-wrapper.jar', 'acra-*.jar'])
     implementation 'androidx.core:core:1.17.0'
     implementation 'com.google.android.material:material:1.14.0'
     testImplementation 'junit:junit:4.13.2'

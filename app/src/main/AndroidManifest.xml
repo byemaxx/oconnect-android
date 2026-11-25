@@ -24,7 +24,7 @@
         android:protectionLevel="dangerous" />
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:enableOnBackInvokedCallback="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app"
@@ -109,13 +109,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <activity
-            android:name="org.acra.CrashReportDialog"
-            android:theme="@style/Theme.OConnect.Dialog"
-            android:launchMode="singleInstance"
-            android:excludeFromRecents="true"
-            android:finishOnTaskLaunch="true" />
 
         <service
             android:name="app.openconnect.core.OpenVpnService"

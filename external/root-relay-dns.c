@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <errno.h>
+#include <linux/filter.h>
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
 #include <net/if.h>
@@ -8,6 +9,8 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include "root-relay.h"
 
 static unsigned read16(const unsigned char *p) {
     return (unsigned)p[0] * 256 + p[1];
@@ -18,23 +21,32 @@ static void write16(unsigned char *p, unsigned value) {
     p[1] = value;
 }
 
-int epdg_dns_worker(int ready, int argc, char **argv) {
-    if (argc != 6) return 2;
+static int filter_modem_interfaces(int fd, const struct epdg_flow *flow) {
+    struct sock_filter code[2 * EPDG_MAX_MODEM_INTERFACES + 2];
+    unsigned size = 0;
+    code[size++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS, SKF_AD_OFF + SKF_AD_IFINDEX);
+    for (unsigned i = 0; i < flow->modem_count; ++i) {
+        code[size++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, flow->modem_interfaces[i], 0, 1);
+        code[size++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, 2048);
+    }
+    code[size++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, 0);
+    struct sock_fprog program = {.len = (unsigned short)size, .filter = code};
+    return setsockopt(fd, SOL_SOCKET, SO_ATTACH_FILTER, &program, sizeof(program));
+}
+
+int epdg_dns_worker(int ready, int argc, char **argv, struct epdg_flow *flow) {
+    if (argc != 3) return 2;
     struct in_addr old_ip, old_dns;
     struct in6_addr router6;
-    int ipv6 = strchr(argv[3], ':') != NULL;
+    int ipv6 = strchr(argv[1], ':') != NULL;
     struct sockaddr_in resolver = {.sin_family = AF_INET, .sin_port = htons(53)};
-    struct sockaddr_ll reverse = {
-        .sll_family = AF_PACKET, .sll_protocol = htons(ETH_P_ALL),
-        .sll_ifindex = (int)if_nametoindex(argv[1])
-    };
-    if (!reverse.sll_ifindex ||
-        (ipv6 ? inet_pton(AF_INET6, argv[3], &router6) != 1 :
-         inet_pton(AF_INET, argv[2], &old_ip) != 1 || inet_pton(AF_INET, argv[3], &old_dns) != 1) ||
-        inet_pton(AF_INET, argv[5], &resolver.sin_addr) != 1) return 2;
+    struct sockaddr_ll reverse = {.sll_family = AF_PACKET};
+    if ((ipv6 ? inet_pton(AF_INET6, argv[1], &router6) != 1 :
+         inet_pton(AF_INET, argv[0], &old_ip) != 1 || inet_pton(AF_INET, argv[1], &old_dns) != 1) ||
+        inet_pton(AF_INET, argv[2], &resolver.sin_addr) != 1) return 2;
 
     int packets = socket(AF_PACKET, SOCK_DGRAM | SOCK_CLOEXEC, htons(ETH_P_ALL));
-    if (packets < 0 || bind(packets, (struct sockaddr *)&reverse, sizeof(reverse)) < 0) {
+    if (packets < 0 || filter_modem_interfaces(packets, flow)) {
         perror("packet relay setup");
         return 1;
     }
@@ -44,6 +56,7 @@ int epdg_dns_worker(int ready, int argc, char **argv) {
     static const char name[] = "\4epdg\3epc\6mnc490\6mcc302\3pub\13" "3gppnetwork\3org";
     unsigned char query[2048];
     unsigned char response[1500];
+    int reported_answer = 0;
     for (;;) {
         struct sockaddr_ll origin;
         socklen_t origin_len = sizeof(origin);
@@ -121,10 +134,16 @@ int epdg_dns_worker(int ready, int argc, char **argv) {
             for (int i = 0; i < 20; i += 2) sum += read16(response + i);
             write16(response + 10, ~((sum & 0xffff) + (sum >> 16)));
         }
+        reverse.sll_ifindex = origin.sll_ifindex;
+        atomic_store(&flow->modem_ifindex, (unsigned)origin.sll_ifindex);
         if (sendto(packets, response, total, 0,
                    (struct sockaddr *)&reverse, sizeof(reverse)) != (ssize_t)total) {
             perror("send response to modem");
             continue;
+        }
+        if (type == 1 && !reported_answer) {
+            fprintf(stderr, "Freedom-stage dns\n");
+            reported_answer = 1;
         }
     }
 }

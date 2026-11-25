@@ -21,6 +21,13 @@
     <PreferenceCategory
         android:layout="@layout/preference_category_header"
         android:title="@string/network_and_protocol">
+        <EditTextPreference
+            android:key="freedom_epdg_endpoint"
+            android:title="@string/freedom_epdg_endpoint"
+            android:summary="@string/freedom_epdg_endpoint_summary"
+            android:layout="@layout/preference_standard_compact"
+            android:inputType="textUri"
+            android:defaultValue="" />
         <ListPreference
             android:key="split_tunnel_mode"
             android:title="@string/split_tunnel_mode"

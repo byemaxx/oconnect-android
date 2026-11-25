@@ -110,6 +110,7 @@ public class OpenVpnService extends VpnService {
 
 	private VPNLog mVPNLog = new VPNLog();
 	private Handler mHandler = new Handler();
+	private volatile boolean mWifiRestartPending;
 
 	public class LocalBinder extends Binder {
 		public OpenVpnService getService() {
@@ -172,6 +173,7 @@ public class OpenVpnService extends VpnService {
 
 	@Override
 	public void onDestroy() {
+		mWifiRestartPending = false;
 		mPrefs.unregisterOnSharedPreferenceChangeListener(mPreferenceListener);
 		killVPNThread(true);
 		unregisterReceivers();
@@ -182,6 +184,7 @@ public class OpenVpnService extends VpnService {
 
 	private synchronized boolean doStopVPN() {
 		if (mVPN != null) {
+			mVPN.cancelWifiRestart();
 			mVPN.stopVPN();
 			return true;
 		}
@@ -299,6 +302,7 @@ public class OpenVpnService extends VpnService {
 		}
 
 		// Extract information from the intent.
+		mWifiRestartPending = false;
 		mUUID = intent.getStringExtra(EXTRA_UUID);
 		if (mUUID == null) {
 			stopSelf(startId);
@@ -508,6 +512,9 @@ public class OpenVpnService extends VpnService {
 			return;
 		}
 		final int startId = mStartId;
+		final String uuid = mUUID;
+		final boolean restart = management.shouldRestartAfterWifiChange();
+		mWifiRestartPending = restart;
 
 		Log.i(TAG, "VPN thread has terminated");
 		mVPN = null;
@@ -516,6 +523,10 @@ public class OpenVpnService extends VpnService {
 
 			@Override
 			public void run() {
+				if (restart && mWifiRestartPending && mStartId == startId) {
+					awaitWifiForRestart(uuid, startId, 30);
+					return;
+				}
 				if (stopSelfResult(startId) == false) {
 					Log.w(TAG, "not stopping service due to startId mismatch");
 				} else {
@@ -524,6 +535,19 @@ public class OpenVpnService extends VpnService {
 				}
 			}
 		});
+	}
+
+	private void awaitWifiForRestart(String uuid, int startId, int remaining) {
+		if (!mWifiRestartPending || mStartId != startId) return;
+		if (RootTunnel.hasWifi(this)) {
+			mWifiRestartPending = false;
+			startService(new Intent(this, OpenVpnService.class).putExtra(EXTRA_UUID, uuid));
+		} else if (remaining > 0) {
+			mHandler.postDelayed(() -> awaitWifiForRestart(uuid, startId, remaining - 1), 1000);
+		} else {
+			mWifiRestartPending = false;
+			stopSelfResult(startId);
+		}
 	}
 
 	public synchronized void setConnectionState(OpenConnectManagementThread management, int state) {
@@ -536,6 +560,22 @@ public class OpenVpnService extends VpnService {
 		}
 		mConnectionState = state;
 		wakeUpActivity();
+	}
+
+	public synchronized int getFreedomRelayStage() {
+		return mVPN == null ? 0 : mVPN.getFreedomRelayStage();
+	}
+
+	public synchronized int getFreedomIms() {
+		return mVPN == null ? 0 : mVPN.getFreedomIms();
+	}
+
+	public synchronized void checkFreedomIms() {
+		if (mVPN != null) mVPN.checkFreedomIms();
+	}
+
+	synchronized void updateFreedomDetails(OpenConnectManagementThread management) {
+		if (mVPN == management) wakeUpActivity();
 	}
 
 	public synchronized int getConnectionState() {
@@ -619,7 +659,10 @@ public class OpenVpnService extends VpnService {
 	}
 
 	public void stopVPN() {
+		boolean waiting = mWifiRestartPending;
+		mWifiRestartPending = false;
 		killVPNThread(false);
+		if (waiting) stopSelf();
 		ProfileManager.setConnectedVpnProfileDisconnected();
 	}
 }
