@@ -9,7 +9,7 @@ public final class FreedomImsProbe {
     private static final String PHONE = "com.android.internal.telephony.ITelephony";
     private static final String SUB = "com.android.internal.telephony.ISub";
 
-    private static Object service(String name, String type) throws ReflectiveOperationException {
+    static Object service(String name, String type) throws ReflectiveOperationException {
         Object binder = Class.forName("android.os.ServiceManager")
                 .getMethod("getService", String.class).invoke(null, name);
         return Class.forName(type + "$Stub").getMethod("asInterface", IBinder.class)

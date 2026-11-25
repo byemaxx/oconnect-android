@@ -61,4 +61,13 @@
                 android:dialogTitle="@string/root_epdg_targets_title"
                 android:inputType="textUri" />
     </PreferenceCategory>
+    <PreferenceCategory
+            android:layout="@layout/preference_category_header"
+            android:title="@string/calling_settings_title">
+        <Preference
+                android:key="cross_sim_diagnostics"
+                android:layout="@layout/preference_standard_compact"
+                android:title="@string/cross_sim_diagnostics_title"
+                android:summary="@string/cross_sim_diagnostics_summary" />
+    </PreferenceCategory>
 </PreferenceScreen>
