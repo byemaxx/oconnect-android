@@ -3,7 +3,6 @@ package app.openconnect.core;
 import android.content.Context;
 import android.os.Build;
 import android.os.PersistableBundle;
-import android.telephony.SubscriptionManager;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -64,11 +63,13 @@ public final class CrossSimDiagnostics {
                 .invoke(subs, false);
         Object phone = FreedomImsProbe.service("phone", PHONE);
         Object config = FreedomImsProbe.service("carrier_config", CONFIG);
-        int defaultData = SubscriptionManager.getDefaultDataSubscriptionId();
-        int activeData = SubscriptionManager.getActiveDataSubscriptionId();
-        emit("default", defaultData >= 0 ? defaultData : UNKNOWN);
-        emit("active", activeData >= 0 ? activeData : UNKNOWN);
-        emit("dataRoamingEnabled", query(PHONE, phone, "isDataRoamingEnabled", activeData));
+        // app_process has no application context for SubscriptionManager's static cache.
+        Object defaultData = query(SUB, subs, "getDefaultDataSubId", new Class<?>[0]);
+        Object activeData = query(SUB, subs, "getActiveDataSubscriptionId", new Class<?>[0]);
+        emit("default", defaultData instanceof Integer && (int) defaultData >= 0 ? defaultData : UNKNOWN);
+        emit("active", activeData instanceof Integer && (int) activeData >= 0 ? activeData : UNKNOWN);
+        emit("dataRoamingEnabled", activeData instanceof Integer
+                ? query(PHONE, phone, "isDataRoamingEnabled", (int) activeData) : UNKNOWN);
 
         Map<Integer, String> preferred = preferredImsTransports();
         for (int id : active) {
