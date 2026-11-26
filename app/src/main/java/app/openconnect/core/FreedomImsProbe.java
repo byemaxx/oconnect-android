@@ -2,7 +2,6 @@ package app.openconnect.core;
 
 import android.os.IBinder;
 
-import java.lang.reflect.Method;
 
 /** Read-only entry point for app_process with the already granted relay root permission. */
 public final class FreedomImsProbe {
@@ -18,29 +17,19 @@ public final class FreedomImsProbe {
 
     public static void main(String[] args) {
         try {
-            String numeric = (String) Class.forName("android.os.SystemProperties")
-                    .getMethod("get", String.class).invoke(null, "gsm.sim.operator.numeric");
-            String[] operators = numeric.split(",", -1);
-            Class<?> subscriptions = Class.forName(SUB);
+            int target = Integer.parseInt(args[0]);
             Object subService = service("isub", SUB);
-            int[] active = (int[]) subscriptions.getMethod("getActiveSubIdList", boolean.class)
+            int[] active = (int[]) Class.forName(SUB).getMethod("getActiveSubIdList", boolean.class)
                     .invoke(subService, false);
-            Method getSlot = subscriptions.getMethod("getSlotIndex", int.class);
-            Object phone = service("phone", PHONE);
-            Class<?> telephony = Class.forName(PHONE);
-            boolean found = false;
             for (int id : active) {
-                int slot = (int) getSlot.invoke(subService, id);
-                if (slot < 0 || slot >= operators.length || !("302490".equals(operators[slot])
-                        || "302500".equals(operators[slot]))) continue;
-                found = true;
-                if (Boolean.TRUE.equals(telephony.getMethod("isWifiCallingAvailable", int.class)
-                        .invoke(phone, id))) {
-                    System.out.println("IMS_WIFI");
-                    return;
-                }
+                if (id != target) continue;
+                Object phone = service("phone", PHONE);
+                boolean available = Boolean.TRUE.equals(Class.forName(PHONE)
+                        .getMethod("isWifiCallingAvailable", int.class).invoke(phone, id));
+                System.out.println(available ? "IMS_WIFI" : "IMS_WAITING");
+                return;
             }
-            System.out.println(found ? "IMS_WAITING" : "IMS_UNKNOWN");
+            System.out.println("IMS_UNKNOWN");
         } catch (ReflectiveOperationException | RuntimeException e) {
             System.out.println("IMS_UNKNOWN");
         }

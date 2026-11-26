@@ -16,6 +16,12 @@
             android:layout="@layout/preference_standard_compact"
             android:title="@string/root_check_title"
             android:summary="@string/root_check_summary" />
+        <ListPreference
+            android:key="epdg_target_slot"
+            android:title="@string/epdg_target_sim"
+            android:summary="%s"
+            android:defaultValue="auto"
+            android:layout="@layout/preference_standard_compact" />
         <EditTextPreference
             android:key="root_epdg_targets"
             android:layout="@layout/preference_standard_compact"

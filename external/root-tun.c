@@ -325,10 +325,10 @@ int main(int argc, char **argv) {
     if (inet_pton(AF_INET, address, &tmp) != 1 ||
         number(slash + 1, 0, 32, &bits)) return 2;
     snprintf(cidr, sizeof(cidr), "%s/%ld", address, bits);
-    int global = strcmp(argv[5], "--freedom-global") == 0;
-    int freedom = global || strcmp(argv[5], "--freedom-relay") == 0;
-    if (freedom && argc != 11) return 2;
-    int target_arg = freedom ? 10 : 5;
+    int global = strcmp(argv[5], "--epdg-global") == 0;
+    int freedom = global || strcmp(argv[5], "--epdg-relay") == 0;
+    if (freedom && argc != 12) return 2;
+    int target_arg = freedom ? 11 : 5;
     int count = argc - target_arg;
     for (int i = 0; i < count; i++) {
         if (inet_pton(AF_INET, argv[i + target_arg], &target_ips[i]) != 1) return 2;
@@ -346,7 +346,8 @@ int main(int argc, char **argv) {
     struct epdg_relay relay = {.vpn = address, .table = table, .tunnel = dev};
     if (freedom) {
         relay.wifi = argv[6];
-        relay.endpoint = argv[10];
+        relay.endpoint = argv[11];
+        relay.hostname = argv[10];
         snprintf(relay.dummy, sizeof(relay.dummy), "ocd%s", hex);
     }
 

@@ -104,7 +104,9 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 		mPrefs = mProfile.mPrefs;
 		mAppPrefs = PreferenceManager.getDefaultSharedPreferences(mContext);
 		mRootMode = mAppPrefs.getBoolean(RootTunnel.ENABLED, false);
-		mFreedomEndpoint = mPrefs.getString(RootTunnel.PROFILE_ENDPOINT, "").trim();
+		String legacyEndpoint = mPrefs.getString(RootTunnel.PROFILE_ENDPOINT, "").trim();
+		mFreedomEndpoint = mPrefs.getBoolean(RootTunnel.PROFILE_RELAY, !legacyEndpoint.isEmpty())
+				? (legacyEndpoint.isEmpty() ? "auto" : legacyEndpoint) : "";
 	}
 
     private String getStringPref(final String key) {
@@ -747,8 +749,8 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 				}
 				String targets = mFreedomEndpoint.isEmpty()
 						? mAppPrefs.getString(RootTunnel.TARGETS, RootTunnel.DEFAULT_TARGET)
-						: "freedom=" + mFreedomEndpoint;
-				mRootUplink = RootTunnel.prepareUplink(mContext, targets);
+						: "epdg=" + mFreedomEndpoint;
+				mRootUplink = RootTunnel.prepareUplink(mContext, targets, mAppPrefs.getString(EpdgDiscovery.TARGET_SIM, "auto"));
 				log("ROOT: selected Wi-Fi " + mRootUplink.interfaceName
 						+ " before authentication");
 				// Root mode always verifies TUN, independent of the legacy switch.
@@ -874,12 +876,15 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 	void checkFreedomIms() {
 		if (Build.VERSION.SDK_INT < 26 || getFreedomRelayStage() == 0
 				|| android.os.SystemClock.elapsedRealtime() < mNextFreedomImsCheck) return;
+		RootTunnel.Uplink uplink = mRootUplink;
+		if (uplink == null || uplink.subId < 0) return;
+		final int targetSubId = uplink.subId;
 		mNextFreedomImsCheck = android.os.SystemClock.elapsedRealtime() + 10000;
 		new Thread(() -> {
 			Process probe = null;
 			try {
 				probe = RootAccess.start("/system/bin/env", "CLASSPATH=" + mContext.getApplicationInfo().sourceDir,
-						"/system/bin/app_process", "/", FreedomImsProbe.class.getName());
+						"/system/bin/app_process", "/", FreedomImsProbe.class.getName(), Integer.toString(targetSubId));
 				if (probe.waitFor(4, java.util.concurrent.TimeUnit.SECONDS)) {
 					try (java.io.BufferedReader reader = new java.io.BufferedReader(
 							new java.io.InputStreamReader(probe.getInputStream()))) {

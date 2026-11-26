@@ -46,7 +46,7 @@ static int is_configured_server(const unsigned char *address, const struct in6_a
     return 0;
 }
 
-static int same_dns_name(const unsigned char *question, const char *name, size_t size) {
+static int same_dns_name(const unsigned char *question, const unsigned char *name, size_t size) {
     for (size_t i = 0; i < size; ++i) {
         unsigned ch = question[i];
         if (ch >= 'A' && ch <= 'Z') ch += 'a' - 'A';
@@ -68,8 +68,34 @@ static int filter_modem_interfaces(int fd, const struct epdg_flow *flow) {
     return setsockopt(fd, SOL_SOCKET, SO_ATTACH_FILTER, &program, sizeof(program));
 }
 
+/* Encode an exact configured hostname; do not answer unrelated DNS queries. */
+static size_t encode_dns_name(const char *host, unsigned char out[256]) {
+    size_t total = 0;
+    while (*host) {
+        const char *end = strchr(host, '.');
+        size_t len = end ? (size_t)(end - host) : strlen(host);
+        if (!len || len > 63 || total + len + 2 > 255) return 0;
+        out[total++] = (unsigned char)len;
+        for (size_t i = 0; i < len; ++i) {
+            unsigned char ch = host[i];
+            if (ch >= 'A' && ch <= 'Z') ch += 'a' - 'A';
+            if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-')) return 0;
+            out[total++] = ch;
+        }
+        if (!end) break;
+        host = end + 1;
+        if (!*host) return 0;
+    }
+    if (!total) return 0;
+    out[total++] = 0;
+    return total;
+}
+
 int epdg_dns_worker(int ready, int argc, char **argv, struct epdg_flow *flow) {
-    if (argc != 3) return 2;
+    if (argc != 4) return 2;
+    unsigned char name[256];
+    size_t name_len = encode_dns_name(argv[3], name);
+    if (!name_len) return 2;
     struct in_addr old_ip;
     struct in6_addr servers[MAX_DNS_SERVERS];
     int ipv6 = strchr(argv[1], ':') != NULL;
@@ -87,7 +113,6 @@ int epdg_dns_worker(int ready, int argc, char **argv, struct epdg_flow *flow) {
     reverse.sll_protocol = htons(ipv6 ? ETH_P_IPV6 : ETH_P_IP);
     if (write(ready, "1", 1) != 1) return 1;
     close(ready);
-    static const char name[] = "\4epdg\3epc\6mnc490\6mcc302\3pub\13" "3gppnetwork\3org";
     unsigned char query[2048];
     unsigned char response[1500];
     int reported_answer = 0;
@@ -116,17 +141,17 @@ int epdg_dns_worker(int ready, int argc, char **argv, struct epdg_flow *flow) {
                    !is_configured_server(query + 16, servers, server_count, 4)) continue;
         const unsigned char *request = query + dns_offset;
         unsigned udp_len = read16(query + header + 4);
-        if (read16(query + header + 2) != 53 || udp_len < 8 + 12 + sizeof(name) + 4 ||
+        if (read16(query + header + 2) != 53 || udp_len < 8 + 12 + name_len + 4 ||
             udp_len + header > (unsigned)len ||
             udp_len != (ipv6 ? read16(query + 4) : read16(query + 2) - 20) ||
-            (request[2] & 0x80) || !same_dns_name(request + 12, name, sizeof(name))) continue;
+            (request[2] & 0x80) || !same_dns_name(request + 12, name, name_len)) continue;
 
         unsigned char *dns = response + dns_offset;
-        const unsigned char *question_type = request + 12 + sizeof(name);
+        const unsigned char *question_type = request + 12 + name_len;
         unsigned type = read16(question_type);
         if (read16(request + 4) != 1 || read16(question_type + 2) != 1 ||
             (type != 1 && type != 28)) continue;
-        ssize_t bytes = 12 + sizeof(name) + 4;
+        ssize_t bytes = 12 + name_len + 4;
         memcpy(dns, request, (size_t)bytes);
         dns[2] = 0x80 | (dns[2] & 1);
         dns[3] = 0x80;

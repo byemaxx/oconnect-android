@@ -22,6 +22,10 @@
     <PreferenceCategory
         android:title="@string/vo_wifi_settings_title"
         android:layout="@layout/preference_category_header">
+        <CheckBoxPreference
+            android:key="epdg_relay_enabled"
+            android:title="@string/epdg_relay_enable"
+            android:layout="@layout/preference_standard_compact" />
         <EditTextPreference
             android:key="freedom_epdg_endpoint"
             android:title="@string/freedom_epdg_endpoint"

@@ -325,8 +325,12 @@
     <string name="connection_mode_vowifi">Wi-Fi Calling only (root)</string>
     <string name="connection_mode_reconnect">Reconnect to apply the routing mode.</string>
     <string name="root_epdg_summary">Requires root and direct Wi-Fi. Route only selected IPv4 IKE traffic without establishing an Android VPN. Disconnect and reconnect to apply.</string>
-    <string name="root_epdg_targets_title">ePDG hostnames / IPv4 addresses</string>
-    <string name="root_epdg_targets_summary">Leave blank for the default Freedom hostname, or enter comma-separated public ePDG targets. Use freedom=auto for the Qualcomm relay.</string>
+    <string name="root_epdg_targets_title">Advanced ePDG override (optional)</string>
+    <string name="epdg_target_sim">Target SIM</string>
+    <string name="epdg_automatic">Automatic</string>
+    <string name="epdg_sim_slot">SIM %1$d</string>
+    <string name="epdg_relay_enable">Enable ePDG relay for this profile</string>
+    <string name="root_epdg_targets_summary">Leave blank for automatic discovery. Use epdg=hostname or epdg=IPv4 for a relay override. Bare addresses retain legacy direct routing.</string>
     <string name="vo_wifi_settings_title">Wi-Fi Calling</string>
     <string name="vo_wifi_settings_summary">Connection mode, ePDG targets, and Cross-SIM diagnostics</string>
     <string name="root_epdg_category">Root ePDG (experimental)</string>
@@ -338,13 +342,13 @@
     <string name="root_check_failed">Root check failed: %1$s</string>
     <string name="ensure_tun_title">Ensure TUN support</string>
     <string name="ensure_tun_summary">Requires root. Reuse the existing TUN driver or try a device-provided tun.ko if the driver is absent. Root ePDG mode checks automatically regardless of this switch.</string>
-    <string name="freedom_epdg_endpoint">Freedom Wi-Fi Calling endpoint</string>
-    <string name="freedom_epdg_endpoint_summary">Enter auto to resolve the Freedom gateway on the current Wi-Fi, or enter a known-good IPv4 address for this VPN profile. Leave blank to disable the relay. Requires root.</string>
-    <string name="freedom_relay_ready">Freedom relay ready · waiting for ePDG traffic</string>
-    <string name="freedom_relay_dns">Freedom ePDG DNS reply delivered</string>
-    <string name="freedom_relay_ike">Freedom IKE response received</string>
-    <string name="freedom_relay_esp">Freedom ESP traffic confirmed in both directions</string>
-    <string name="freedom_ims_wifi">Freedom Wi-Fi Calling available</string>
-    <string name="freedom_ims_waiting">Freedom Wi-Fi Calling not available yet</string>
-    <string name="freedom_ims_unknown">Freedom Wi-Fi Calling status unavailable</string>
+    <string name="freedom_epdg_endpoint">Advanced ePDG endpoint override (optional)</string>
+    <string name="freedom_epdg_endpoint_summary">Leave blank for automatic SIM-based discovery, or enter a known-good hostname or IPv4 address list. Requires root.</string>
+    <string name="freedom_relay_ready">ePDG relay ready · waiting for ePDG traffic</string>
+    <string name="freedom_relay_dns">ePDG DNS reply delivered</string>
+    <string name="freedom_relay_ike">ePDG IKE response received</string>
+    <string name="freedom_relay_esp">ePDG ESP traffic confirmed in both directions</string>
+    <string name="freedom_ims_wifi">Target SIM Wi-Fi Calling available</string>
+    <string name="freedom_ims_waiting">Target SIM Wi-Fi Calling not available yet</string>
+    <string name="freedom_ims_unknown">Target SIM Wi-Fi Calling status unavailable</string>
 </resources>

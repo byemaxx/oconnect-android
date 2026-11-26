@@ -15,7 +15,7 @@ struct epdg_flow {
 };
 
 struct epdg_relay {
-    const char *wifi, *endpoint, *vpn, *table, *tunnel;
+    const char *wifi, *endpoint, *vpn, *table, *tunnel, *hostname;
     char dummy[IFNAMSIZ];
     struct epdg_flow *flow;
     pid_t workers[3];

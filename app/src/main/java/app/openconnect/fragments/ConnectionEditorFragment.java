@@ -79,6 +79,13 @@ public class ConnectionEditorFragment extends PreferenceFragment
         mPrefs.setSharedPreferencesName(ProfileManager.getPrefsName(mUUID));
         mPrefs.setSharedPreferencesMode(Context.MODE_PRIVATE);
 
+        // Migrate the previous nonempty endpoint opt-in before inflating the checkbox.
+        SharedPreferences relayPrefs = mPrefs.getSharedPreferences();
+        if (!relayPrefs.contains("epdg_relay_enabled")) {
+            relayPrefs.edit().putBoolean("epdg_relay_enabled",
+                    !relayPrefs.getString("freedom_epdg_endpoint", "").trim().isEmpty()).apply();
+        }
+
         mScreen = getArguments().getString(ConnectionEditorActivity.EXTRA_SCREEN,
                 ConnectionEditorActivity.SCREEN_MAIN);
         if (ConnectionEditorActivity.SCREEN_AUTHENTICATION.equals(mScreen)) {

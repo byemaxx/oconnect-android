@@ -37,6 +37,19 @@ public class CallingSettings extends PreferenceFragment {
 
         ListPreference connectionMode = (ListPreference) findPreference("connection_mode");
         Preference targets = findPreference("root_epdg_targets");
+        ListPreference targetSim = (ListPreference) findPreference("epdg_target_slot");
+        android.telephony.TelephonyManager tm = (android.telephony.TelephonyManager)
+                getActivity().getSystemService(Context.TELEPHONY_SERVICE);
+        List<String> simLabels = new ArrayList<>(), simValues = new ArrayList<>();
+        simLabels.add(getString(R.string.epdg_automatic));
+        simValues.add("auto");
+        int count = tm == null ? 1 : tm.getPhoneCount();
+        for (int slot = 0; slot < count; slot++) {
+            simLabels.add(getString(R.string.epdg_sim_slot, slot + 1));
+            simValues.add(Integer.toString(slot));
+        }
+        targetSim.setEntries(simLabels.toArray(new String[0]));
+        targetSim.setEntryValues(simValues.toArray(new String[0]));
         Preference rootCheck = findPreference("root_epdg_check");
         if (connectionMode != null) {
             SharedPreferences prefs = getPreferenceScreen().getSharedPreferences();

@@ -44,7 +44,8 @@ final class RootTunnel implements AutoCloseable {
     static final String ENABLED = "root_epdg_enabled";
     static final String TARGETS = "root_epdg_targets";
     static final String PROFILE_ENDPOINT = "freedom_epdg_endpoint";
-    static final String DEFAULT_TARGET = "epdg.epc.mnc490.mcc302.pub.3gppnetwork.org";
+    static final String DEFAULT_TARGET = "auto";
+    static final String PROFILE_RELAY = "epdg_relay_enabled";
     private static final String TAG = "OConnectRoot";
     private static final int MAX_TARGETS = 8;
     private static final int MAX_DNS_SERVERS_PER_FAMILY = 16;
@@ -104,16 +105,20 @@ final class RootTunnel implements AutoCloseable {
         final Set<String> targets;
         final String interfaceName;
         final boolean freedomRelay;
+        final int subId;
+        final String hostname;
         private ConnectivityManager.NetworkCallback callback;
 
         private Uplink(ConnectivityManager cm, Network network, Network previous,
-                Set<String> targets, String interfaceName, boolean freedomRelay) {
+                Set<String> targets, String interfaceName, boolean freedomRelay, int subId, String hostname) {
             this.cm = cm;
             this.network = network;
             this.previous = previous;
             this.targets = targets;
             this.interfaceName = interfaceName;
             this.freedomRelay = freedomRelay;
+            this.subId = subId;
+            this.hostname = hostname;
         }
 
         void verifyAvailable() throws IOException {
@@ -201,7 +206,7 @@ final class RootTunnel implements AutoCloseable {
         return false;
     }
 
-    static synchronized Uplink prepareUplink(Context context, String targets)
+    static synchronized Uplink prepareUplink(Context context, String targets, String targetSlot)
             throws IOException {
         if (Build.VERSION.SDK_INT < 26) {
             throw new IOException("Root ePDG mode requires Android 8 or newer");
@@ -243,39 +248,45 @@ final class RootTunnel implements AutoCloseable {
 
         String input = targets.trim();
         if (input.isEmpty()) input = DEFAULT_TARGET;
-        boolean freedomRelay = input.toLowerCase(Locale.ROOT).startsWith("freedom=");
+        boolean legacy = input.toLowerCase(Locale.ROOT).startsWith("freedom=");
+        boolean freedomRelay = legacy || input.toLowerCase(Locale.ROOT).startsWith("epdg=")
+                || "auto".equalsIgnoreCase(input);
         Set<String> resolved;
+        int subId = -1;
+        String hostname = null;
         if (freedomRelay) {
-            String endpoint = input.substring("freedom=".length()).trim();
-            resolved = "auto".equalsIgnoreCase(endpoint)
-                    ? resolveTargets(wifi, DEFAULT_TARGET)
-                    : Collections.singleton(freedomEndpoint(endpoint));
+            String endpoint = input.contains("=") ? input.substring(input.indexOf('=') + 1).trim() : input;
+            EpdgDiscovery.Target target = EpdgDiscovery.read(context, targetSlot);
+            subId = target.subId;
+            hostname = target.home;
+            if (endpoint.isEmpty() || "auto".equalsIgnoreCase(endpoint)) {
+                resolved = null;
+                IOException failure = null;
+                for (String candidate : target.candidates) {
+                    try {
+                        resolved = resolveTargets(wifi, candidate);
+                        if (!candidate.matches("[0-9.]+")) hostname = candidate;
+                        break;
+                    } catch (IOException e) { failure = e; }
+                }
+                if (resolved == null) throw new IOException("No discovered IPv4 ePDG endpoint could be resolved", failure);
+            } else {
+                resolved = resolveTargets(wifi, endpoint);
+                if (EpdgDiscovery.validHost(endpoint) && !endpoint.matches("[0-9.]+")) hostname = endpoint;
+            }
         } else {
+            // Preserve the legacy direct route-only mode for explicit target lists.
             resolved = resolveTargets(wifi, input);
         }
         Network previous = cm.getBoundNetworkForProcess();
         if (!cm.bindProcessToNetwork(wifi)) {
             throw new IOException("Could not bind OConnect to the selected Wi-Fi network");
         }
-        Uplink uplink = new Uplink(cm, wifi, previous, resolved, links.getInterfaceName(), freedomRelay);
+        Uplink uplink = new Uplink(cm, wifi, previous, resolved, links.getInterfaceName(), freedomRelay, subId, hostname);
         activeUplink = uplink;
         Log.i(TAG, "Selected physical Wi-Fi: " + uplink.interfaceName
                 + "; default network was " + active + "; targets=" + resolved);
         return uplink;
-    }
-
-    private static String freedomEndpoint(String input) throws IOException {
-        String value = input.trim();
-        if (!value.matches("[0-9]{1,3}(\\.[0-9]{1,3}){3}")) {
-            throw new IOException("Freedom relay requires auto or a public IPv4 address");
-        }
-        InetAddress address = InetAddress.getByName(value);
-        if (!(address instanceof Inet4Address) || address.isAnyLocalAddress()
-                || address.isLoopbackAddress() || address.isLinkLocalAddress()
-                || address.isMulticastAddress() || address.isSiteLocalAddress()) {
-            throw new IOException("Freedom relay requires a public IPv4 address");
-        }
-        return address.getHostAddress();
     }
 
     private static Set<String> resolveTargets(Network wifi, String targets) throws IOException {
@@ -375,9 +386,9 @@ final class RootTunnel implements AutoCloseable {
             if (dns4.isEmpty() && dns6.isEmpty()) {
                 throw new IOException("Freedom relay requires Wi-Fi IPv4 or link-local IPv6 DNS");
             }
-            Collections.addAll(args, global ? "--freedom-global" : "--freedom-relay",
+            Collections.addAll(args, global ? "--epdg-global" : "--epdg-relay",
                     uplink.interfaceName, wifiAddress, dns4.isEmpty() ? "-" : String.join(",", dns4),
-                    dns6.isEmpty() ? "-" : String.join(",", dns6));
+                    dns6.isEmpty() ? "-" : String.join(",", dns6), uplink.hostname.toLowerCase(Locale.ROOT));
             Log.i(TAG, "Selected Freedom relay endpoint: " + resolved.iterator().next()
                     + "; Wi-Fi DNS candidates IPv4=" + dns4.size() + " IPv6=" + dns6.size());
         }

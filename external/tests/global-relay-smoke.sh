@@ -19,8 +19,8 @@ ip addr add 192.0.2.10/24 dev "$wifi"
 ip link set "$wifi" up
 tc qdisc add dev "$wifi" clsact
 launch() {
-    "$broker" "$name" 29001 198.18.240.17/32 1300 --freedom-global \
-        "$wifi" 192.0.2.10 192.0.2.53 - "$target" &
+    "$broker" "$name" 29001 198.18.240.17/32 1300 --epdg-global \
+        "$wifi" 192.0.2.10 192.0.2.53 - epdg.example.test "$target" &
     broker_pid=$!
     sleep 1
 }

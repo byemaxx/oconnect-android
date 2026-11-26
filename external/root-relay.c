@@ -144,11 +144,11 @@ int epdg_relay_start(struct epdg_relay *r, const char *wifi_ip, const char *dns4
     r->route_added = 1;
     char *ike[] = {(char *)wifi_ip, (char *)r->vpn, (char *)r->endpoint,
                    (char *)r->tunnel, r->dummy};
-    char *dns[] = {(char *)wifi_ip, (char *)dns4, (char *)r->endpoint};
+    char *dns[] = {(char *)wifi_ip, (char *)dns4, (char *)r->endpoint, (char *)r->hostname};
     if (start_worker(&r->workers[0], epdg_ike_worker, 5, ike, tun, control, r->flow) ||
-        (v4 && start_worker(&r->workers[1], epdg_dns_worker, 3, dns, tun, control, r->flow))) return -1;
+        (v4 && start_worker(&r->workers[1], epdg_dns_worker, 4, dns, tun, control, r->flow))) return -1;
     dns[1] = (char *)dns6;
-    if (v6 && start_worker(&r->workers[2], epdg_dns_worker, 3, dns, tun, control, r->flow)) return -1;
+    if (v6 && start_worker(&r->workers[2], epdg_dns_worker, 4, dns, tun, control, r->flow)) return -1;
 
     if (outbound(r, wifi_cidr, "500", "800::811")) return -1;
     r->outbound500 = 1;
