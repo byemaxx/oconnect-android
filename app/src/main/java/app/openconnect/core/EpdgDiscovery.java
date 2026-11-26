@@ -2,6 +2,7 @@ package app.openconnect.core;
 
 import android.content.Context;
 import android.os.PersistableBundle;
+import android.os.Build;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -45,6 +46,10 @@ public final class EpdgDiscovery {
     }
 
     static Target read(Context context, String slot) throws IOException {
+        // Timed process waiting and forced cleanup are available from API 26.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            throw new IOException("ePDG discovery requires Android 8 or newer");
+        }
         Process process = RootAccess.start("/system/bin/env",
                 "CLASSPATH=" + context.getApplicationInfo().sourceDir,
                 "/system/bin/app_process", "/", EpdgDiscovery.class.getName(),
