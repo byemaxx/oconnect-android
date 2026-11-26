@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+    <PreferenceCategory
+        android:layout="@layout/preference_category_header"
+        android:title="@string/vo_wifi_settings_title">
+        <ListPreference
+            android:key="connection_mode"
+            android:persistent="false"
+            android:entries="@array/connection_mode_labels"
+            android:entryValues="@array/connection_mode_values"
+            android:layout="@layout/preference_standard_compact"
+            android:title="@string/connection_mode_title"
+            android:summary="%s" />
+        <Preference
+            android:key="root_epdg_check"
+            android:layout="@layout/preference_standard_compact"
+            android:title="@string/root_check_title"
+            android:summary="@string/root_check_summary" />
+        <EditTextPreference
+            android:key="root_epdg_targets"
+            android:layout="@layout/preference_standard_compact"
+            android:title="@string/root_epdg_targets_title"
+            android:summary="@string/root_epdg_targets_summary"
+            android:dialogTitle="@string/root_epdg_targets_title"
+            android:inputType="textUri" />
+    </PreferenceCategory>
+    <PreferenceCategory
+        android:layout="@layout/preference_category_header"
+        android:title="@string/calling_settings_title">
+        <Preference
+            android:key="cross_sim_diagnostics"
+            android:layout="@layout/preference_standard_compact"
+            android:title="@string/cross_sim_diagnostics_title"
+            android:summary="@string/cross_sim_diagnostics_summary" />
+    </PreferenceCategory>
+</PreferenceScreen>

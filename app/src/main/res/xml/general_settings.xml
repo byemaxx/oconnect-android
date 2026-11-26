@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+    <Preference
+        android:key="calling_settings"
+        android:layout="@layout/preference_navigation_compact"
+        android:summary="@string/vo_wifi_settings_summary"
+        android:title="@string/vo_wifi_settings_title" />
     <PreferenceCategory android:title="@string/common_settings">
         <ListPreference
                 android:defaultValue="__last_used__"

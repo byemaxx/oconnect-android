@@ -118,13 +118,10 @@ int epdg_relay_probe(const char *wifi) {
 int epdg_relay_start(struct epdg_relay *r, const char *wifi_ip, const char *dns4,
                      const char *dns6, int tun, int control) {
     struct in_addr ip4;
-    struct in6_addr ip6;
     int v4 = strcmp(dns4, "-") != 0;
     int v6 = strcmp(dns6, "-") != 0;
     if ((!v4 && !v6) || !if_nametoindex(r->wifi) ||
-        inet_pton(AF_INET, wifi_ip, &ip4) != 1 ||
-        (v4 && inet_pton(AF_INET, dns4, &ip4) != 1) ||
-        (v6 && (inet_pton(AF_INET6, dns6, &ip6) != 1 || !IN6_IS_ADDR_LINKLOCAL(&ip6)))) return -1;
+        inet_pton(AF_INET, wifi_ip, &ip4) != 1) return -1;
     void *shared = mmap(NULL, sizeof(*r->flow), PROT_READ | PROT_WRITE,
                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     if (shared == MAP_FAILED) return -1;

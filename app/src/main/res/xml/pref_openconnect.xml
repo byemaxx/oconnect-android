@@ -19,6 +19,18 @@
             android:defaultValue="" />
     </PreferenceCategory>
 
+    <PreferenceCategory
+        android:title="@string/vo_wifi_settings_title"
+        android:layout="@layout/preference_category_header">
+        <EditTextPreference
+            android:key="freedom_epdg_endpoint"
+            android:title="@string/freedom_epdg_endpoint"
+            android:summary="@string/freedom_epdg_endpoint_summary"
+            android:layout="@layout/preference_standard_compact"
+            android:inputType="textUri"
+            android:defaultValue="" />
+    </PreferenceCategory>
+
     <Preference
         android:key="pref_key_authentication"
         android:icon="@drawable/ic_security_24"

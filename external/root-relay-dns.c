@@ -21,6 +21,40 @@ static void write16(unsigned char *p, unsigned value) {
     p[1] = value;
 }
 
+#define MAX_DNS_SERVERS 16
+
+static unsigned parse_servers(const char *input, int family,
+                              struct in6_addr servers[MAX_DNS_SERVERS]) {
+    char text[MAX_DNS_SERVERS * INET6_ADDRSTRLEN];
+    if (strlen(input) >= sizeof(text)) return 0;
+    strcpy(text, input);
+    unsigned count = 0;
+    char *state;
+    for (char *entry = strtok_r(text, ",", &state); entry;
+         entry = strtok_r(NULL, ",", &state)) {
+        if (count == MAX_DNS_SERVERS || inet_pton(family, entry, &servers[count]) != 1 ||
+            (family == AF_INET6 && !IN6_IS_ADDR_LINKLOCAL(&servers[count]))) return 0;
+        ++count;
+    }
+    return count;
+}
+
+static int is_configured_server(const unsigned char *address, const struct in6_addr *servers,
+                                unsigned count, size_t size) {
+    for (unsigned i = 0; i < count; ++i)
+        if (!memcmp(address, &servers[i], size)) return 1;
+    return 0;
+}
+
+static int same_dns_name(const unsigned char *question, const char *name, size_t size) {
+    for (size_t i = 0; i < size; ++i) {
+        unsigned ch = question[i];
+        if (ch >= 'A' && ch <= 'Z') ch += 'a' - 'A';
+        if (ch != (unsigned char)name[i]) return 0;
+    }
+    return 1;
+}
+
 static int filter_modem_interfaces(int fd, const struct epdg_flow *flow) {
     struct sock_filter code[2 * EPDG_MAX_MODEM_INTERFACES + 2];
     unsigned size = 0;
@@ -36,13 +70,13 @@ static int filter_modem_interfaces(int fd, const struct epdg_flow *flow) {
 
 int epdg_dns_worker(int ready, int argc, char **argv, struct epdg_flow *flow) {
     if (argc != 3) return 2;
-    struct in_addr old_ip, old_dns;
-    struct in6_addr router6;
+    struct in_addr old_ip;
+    struct in6_addr servers[MAX_DNS_SERVERS];
     int ipv6 = strchr(argv[1], ':') != NULL;
     struct sockaddr_in resolver = {.sin_family = AF_INET, .sin_port = htons(53)};
     struct sockaddr_ll reverse = {.sll_family = AF_PACKET};
-    if ((ipv6 ? inet_pton(AF_INET6, argv[1], &router6) != 1 :
-         inet_pton(AF_INET, argv[0], &old_ip) != 1 || inet_pton(AF_INET, argv[1], &old_dns) != 1) ||
+    unsigned server_count = parse_servers(argv[1], ipv6 ? AF_INET6 : AF_INET, servers);
+    if (!server_count || inet_pton(AF_INET, argv[0], &old_ip) != 1 ||
         inet_pton(AF_INET, argv[2], &resolver.sin_addr) != 1) return 2;
 
     int packets = socket(AF_PACKET, SOCK_DGRAM | SOCK_CLOEXEC, htons(ETH_P_ALL));
@@ -76,16 +110,16 @@ int epdg_dns_worker(int ready, int argc, char **argv, struct epdg_flow *flow) {
         if (ipv6) {
             if ((query[0] >> 4) != 6 || query[6] != IPPROTO_UDP ||
                 query[8] != 0xfe || (query[9] & 0xc0) != 0x80 ||
-                memcmp(query + 24, &router6, 16)) continue;
+                !is_configured_server(query + 24, servers, server_count, 16)) continue;
         } else if (query[0] != 0x45 || (read16(query + 6) & 0x3fff) ||
                    query[9] != IPPROTO_UDP || memcmp(query + 12, &old_ip, 4) ||
-                   memcmp(query + 16, &old_dns, 4)) continue;
+                   !is_configured_server(query + 16, servers, server_count, 4)) continue;
         const unsigned char *request = query + dns_offset;
         unsigned udp_len = read16(query + header + 4);
         if (read16(query + header + 2) != 53 || udp_len < 8 + 12 + sizeof(name) + 4 ||
             udp_len + header > (unsigned)len ||
             udp_len != (ipv6 ? read16(query + 4) : read16(query + 2) - 20) ||
-            (request[2] & 0x80) || memcmp(request + 12, name, sizeof(name))) continue;
+            (request[2] & 0x80) || !same_dns_name(request + 12, name, sizeof(name))) continue;
 
         unsigned char *dns = response + dns_offset;
         const unsigned char *question_type = request + 12 + sizeof(name);
@@ -116,7 +150,7 @@ int epdg_dns_worker(int ready, int argc, char **argv, struct epdg_flow *flow) {
             write16(response + 4, bytes + 8);
             response[6] = IPPROTO_UDP;
             response[7] = 64;
-            memcpy(response + 8, &router6, 16);
+            memcpy(response + 8, query + 24, 16);
             memcpy(response + 24, query + 8, 16);
             unsigned sum = IPPROTO_UDP + (unsigned)bytes + 8;
             for (unsigned i = 8; i + 1 < total; i += 2) sum += read16(response + i);
@@ -128,14 +162,16 @@ int epdg_dns_worker(int ready, int argc, char **argv, struct epdg_flow *flow) {
             write16(response + 2, total);
             response[8] = 64;
             response[9] = IPPROTO_UDP;
-            memcpy(response + 12, &old_dns, 4);
+            memcpy(response + 12, query + 16, 4);
             memcpy(response + 16, &old_ip, 4);
             unsigned sum = 0;
             for (int i = 0; i < 20; i += 2) sum += read16(response + i);
             write16(response + 10, ~((sum & 0xffff) + (sum >> 16)));
         }
         reverse.sll_ifindex = origin.sll_ifindex;
-        atomic_store(&flow->modem_ifindex, (unsigned)origin.sll_ifindex);
+        // Only the A answer starts the IPv4 relay. An AAAA/NODATA query must
+        // not replace the reverse interface chosen by another DNS worker.
+        if (type == 1) atomic_store(&flow->modem_ifindex, (unsigned)origin.sll_ifindex);
         if (sendto(packets, response, total, 0,
                    (struct sockaddr *)&reverse, sizeof(reverse)) != (ssize_t)total) {
             perror("send response to modem");

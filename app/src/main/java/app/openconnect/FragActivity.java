@@ -74,6 +74,8 @@ public class FragActivity extends ToolbarActivity {
 			return getString(R.string.generalsettings);
 		} else if ("AdvancedGeneralSettings".equals(fragName)) {
 			return getString(R.string.advanced);
+		} else if ("CallingSettings".equals(fragName)) {
+			return getString(R.string.vo_wifi_settings_title);
 		} else if ("TokenParentFragment".equals(fragName)) {
 			return getString(R.string.securid_info);
 		} else if ("AboutFragment".equals(fragName)) {

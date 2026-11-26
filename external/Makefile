@@ -178,8 +178,10 @@ $(ARCH_CSD_TARGETS): %/libcsd-wrapper.so: csd-wrapper.c %/libopenconnect.so Make
 	$(TOOLCHAIN)/bin/llvm-strip --strip-unneeded $@
 
 ROOT_TUN_SOURCES := root-tun.c root-relay.c root-relay-dns.c root-relay-packets.c
+# The root ePDG mode requires Android 8+; if_nameindex is available from API 24.
+ROOT_TUN_API := $(shell if [ "$(ANDROID_API)" -lt 24 ]; then echo 24; else echo "$(ANDROID_API)"; fi)
 
 $(ARCH_ROOT_TARGETS): %/libroot-tun.so: $(ROOT_TUN_SOURCES) root-relay.h Makefile
 	mkdir -p $*
-	$(call get_cc,$*) -Wall -Wextra -Os -fPIE -pie $(ANDROID_LDFLAGS) $(ROOT_TUN_SOURCES) -o $@
+	$(TOOLCHAIN)/bin/$(TRIPLET_$*)$(ROOT_TUN_API)-clang -Wall -Wextra -Os -fPIE -pie $(ANDROID_LDFLAGS) $(ROOT_TUN_SOURCES) -o $@
 	$(TOOLCHAIN)/bin/llvm-strip --strip-unneeded $@

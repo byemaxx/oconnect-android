@@ -47,6 +47,7 @@ public class StatusFragment extends Fragment {
 
 	private static final int MENU_CHECK_UPDATES = 1;
 	private static final int MENU_SECURID = 2;
+	private static final int MENU_CALLING = 3;
 
 	private View mView;
 	private VPNConnector mConn;
@@ -309,9 +310,14 @@ public class StatusFragment extends Fragment {
 
 	private void showOverflowMenu(View anchor) {
 		PopupMenu popup = new PopupMenu(getActivity(), anchor);
-		popup.getMenu().add(0, MENU_CHECK_UPDATES, 0, R.string.check_for_updates);
-		popup.getMenu().add(0, MENU_SECURID, 1, R.string.securid_info);
+		popup.getMenu().add(0, MENU_CALLING, 0, R.string.vo_wifi_settings_title);
+		popup.getMenu().add(0, MENU_CHECK_UPDATES, 1, R.string.check_for_updates);
+		popup.getMenu().add(0, MENU_SECURID, 2, R.string.securid_info);
 		popup.setOnMenuItemClickListener(item -> {
+			if (item.getItemId() == MENU_CALLING) {
+				startFragment("CallingSettings");
+				return true;
+			}
 			if (item.getItemId() == MENU_CHECK_UPDATES) {
 				GitHubUpdateChecker.checkManually(getActivity());
 				return true;

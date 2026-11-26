@@ -1,7 +1,9 @@
 name: Experimental Root ePDG APK
 on:
   push:
-    branches: [experimental/root-epdg-tun]
+    branches:
+      - experimental/root-epdg-tun
+      - experimental/cross-sim-calling
   workflow_dispatch:
 permissions:
   contents: read
@@ -29,13 +31,14 @@ jobs:
           sdkmanager --version
           sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
           test -x "$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android23-clang"
+          test -x "$ANDROID_HOME/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
       - name: Build ARM64 native libraries
         run: |
           make -C external install-arch-arm64 ANDROID_NDK="$ANDROID_HOME/ndk/27.2.12479018"
-      - name: Build and unit test
+      - name: Build, unit test and lint
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon testDebugUnitTest assembleDebug
+          ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:

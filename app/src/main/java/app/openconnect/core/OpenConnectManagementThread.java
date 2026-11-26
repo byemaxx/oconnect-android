@@ -868,11 +868,12 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 	}
 
 	int getFreedomIms() {
-		return mFreedomIms;
+		return getFreedomRelayStage() == 0 ? 0 : mFreedomIms;
 	}
 
 	void checkFreedomIms() {
-		if (getFreedomRelayStage() == 0 || android.os.SystemClock.elapsedRealtime() < mNextFreedomImsCheck) return;
+		if (Build.VERSION.SDK_INT < 26 || getFreedomRelayStage() == 0
+				|| android.os.SystemClock.elapsedRealtime() < mNextFreedomImsCheck) return;
 		mNextFreedomImsCheck = android.os.SystemClock.elapsedRealtime() + 10000;
 		new Thread(() -> {
 			Process probe = null;
@@ -891,6 +892,7 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 			} catch (IOException e) {
 				mFreedomIms = 0;
 			} catch (InterruptedException e) {
+				mFreedomIms = 0;
 				Thread.currentThread().interrupt();
 			} finally {
 				if (probe != null) probe.destroy();

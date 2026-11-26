@@ -5,6 +5,13 @@ import java.util.List;
 final class Ipv4RoutePolicy {
     private Ipv4RoutePolicy() {}
 
+    static String firstAllowed(Iterable<String> candidates, List<String> includes, List<String> excludes) {
+        for (String candidate : candidates) {
+            if (allows(candidate, includes, excludes)) return candidate;
+        }
+        return null;
+    }
+
     static boolean allows(String address, List<String> includes, List<String> excludes) {
         long target = ipv4(address);
         boolean hasIpv4Include = false;

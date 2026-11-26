@@ -112,7 +112,7 @@ public final class CrossSimDiagnostics {
                 Map<Integer, String> result = parsePreferredImsTransports(reader);
                 if (dump.waitFor() == 0) return result;
             } finally {
-                if (dump.isAlive()) dump.destroyForcibly();
+                dump.destroy();
             }
         } catch (IOException ignored) {
             // This vendor dump can be unavailable even if the Binder queries work.

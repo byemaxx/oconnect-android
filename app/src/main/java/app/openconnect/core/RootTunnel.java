@@ -47,19 +47,40 @@ final class RootTunnel implements AutoCloseable {
     static final String DEFAULT_TARGET = "epdg.epc.mnc490.mcc302.pub.3gppnetwork.org";
     private static final String TAG = "OConnectRoot";
     private static final int MAX_TARGETS = 8;
+    private static final int MAX_DNS_SERVERS_PER_FAMILY = 16;
     private LocalSocket control;
     private ParcelFileDescriptor tun;
     private java.lang.Process helper;
     private volatile int freedomStage;
     private volatile Runnable failureCallback;
+    private volatile boolean helperOutputClosed;
+    private final java.util.concurrent.atomic.AtomicBoolean failureReported =
+            new java.util.concurrent.atomic.AtomicBoolean();
 
     void watchFailure(Runnable callback) {
         failureCallback = callback;
-        if (!helper.isAlive()) callback.run();
+        if (helperOutputClosed || !helperRunning(helper)) reportHelperFailure();
     }
 
     int getFreedomStage() {
-        return freedomStage;
+        return helperOutputClosed || !helperRunning(helper) ? 0 : freedomStage;
+    }
+
+    private static boolean helperRunning(Process process) {
+        if (process == null) return false;
+        try {
+            process.exitValue();
+            return false;
+        } catch (IllegalThreadStateException running) {
+            return true;
+        }
+    }
+
+    private void reportHelperFailure() {
+        helperOutputClosed = true;
+        freedomStage = 0;
+        Runnable failed = failureCallback;
+        if (failed != null && failureReported.compareAndSet(false, true)) failed.run();
     }
 
     private static Uplink activeUplink;
@@ -113,7 +134,10 @@ final class RootTunnel implements AutoCloseable {
             callback = new ConnectivityManager.NetworkCallback() {
                 @Override
                 public void onLost(Network candidate) {
-                    if (network.equals(candidate)) changed.run();
+                    if (network.equals(candidate)) {
+                        Log.i(TAG, "Selected Wi-Fi lost; request relay reconnect");
+                        changed.run();
+                    }
                 }
 
                 @Override
@@ -122,6 +146,7 @@ final class RootTunnel implements AutoCloseable {
                             (!java.util.Objects.equals(ipv4Address(current), ipv4Address(links))
                             || !current.getDnsServers().equals(links.getDnsServers())
                             || !java.util.Objects.equals(current.getInterfaceName(), links.getInterfaceName()))) {
+                        Log.i(TAG, "Selected Wi-Fi interface, IPv4 or DNS changed; request relay reconnect");
                         changed.run();
                     }
                 }
@@ -217,10 +242,17 @@ final class RootTunnel implements AutoCloseable {
         }
 
         String input = targets.trim();
+        if (input.isEmpty()) input = DEFAULT_TARGET;
         boolean freedomRelay = input.toLowerCase(Locale.ROOT).startsWith("freedom=");
-        Set<String> resolved = freedomRelay
-                ? Collections.singleton(freedomEndpoint(input.substring("freedom=".length())))
-                : resolveTargets(wifi, targets);
+        Set<String> resolved;
+        if (freedomRelay) {
+            String endpoint = input.substring("freedom=".length()).trim();
+            resolved = "auto".equalsIgnoreCase(endpoint)
+                    ? resolveTargets(wifi, DEFAULT_TARGET)
+                    : Collections.singleton(freedomEndpoint(endpoint));
+        } else {
+            resolved = resolveTargets(wifi, input);
+        }
         Network previous = cm.getBoundNetworkForProcess();
         if (!cm.bindProcessToNetwork(wifi)) {
             throw new IOException("Could not bind OConnect to the selected Wi-Fi network");
@@ -235,7 +267,7 @@ final class RootTunnel implements AutoCloseable {
     private static String freedomEndpoint(String input) throws IOException {
         String value = input.trim();
         if (!value.matches("[0-9]{1,3}(\\.[0-9]{1,3}){3}")) {
-            throw new IOException("Freedom relay requires freedom=<public IPv4 address>");
+            throw new IOException("Freedom relay requires auto or a public IPv4 address");
         }
         InetAddress address = InetAddress.getByName(value);
         if (!(address instanceof Inet4Address) || address.isAnyLocalAddress()
@@ -289,23 +321,29 @@ final class RootTunnel implements AutoCloseable {
             throw new IOException("VPN server did not assign an IPv4 address");
         }
         // Do not replace server-selected split routes with an unrestricted tunnel.
+        Set<String> resolved = uplink.targets;
         if (global) {
+            String endpoint;
             try {
-                if (!Ipv4RoutePolicy.allows(uplink.targets.iterator().next(), ip.splitIncludes, ip.splitExcludes)) {
-                    throw new IOException("VPN server routes exclude the configured Freedom endpoint");
-                }
+                endpoint = Ipv4RoutePolicy.firstAllowed(resolved, ip.splitIncludes, ip.splitExcludes);
             } catch (IllegalArgumentException e) {
                 throw new IOException("Cannot validate server routes for Freedom relay", e);
             }
+            if (endpoint == null) {
+                throw new IOException("VPN server routes exclude all Freedom endpoint candidates");
+            }
+            resolved = Collections.singleton(endpoint);
         } else if (ip.splitIncludes != null && !ip.splitIncludes.isEmpty()) {
             throw new IOException("Root ePDG mode currently requires a full IPv4 VPN");
+        } else if (uplink.freedomRelay) {
+            // The Freedom helper maps the DNS answer and IKE relay to one endpoint per session.
+            resolved = Collections.singleton(resolved.iterator().next());
         }
         InetAddress vpnAddress = InetAddress.getByName(ip.addr);
         if (!(vpnAddress instanceof Inet4Address)) {
             throw new IOException("Invalid VPN IPv4 address");
         }
         CIDRIP cidr = new CIDRIP(ip.addr, ip.netmask);
-        Set<String> resolved = uplink.targets;
         int mtu = ip.MTU > 0 ? ip.MTU : 1400;
         if (mtu < 576 || mtu > 9000) throw new IOException("Invalid tunnel MTU");
         String nonce = UUID.randomUUID().toString().replace("-", "");
@@ -324,19 +362,24 @@ final class RootTunnel implements AutoCloseable {
             }
             String wifiAddress = ipv4Address(links);
             if (wifiAddress == null) throw new IOException("Freedom relay requires Wi-Fi IPv4");
-            String dns4 = "-", dns6 = "-";
+            Set<String> dns4 = new LinkedHashSet<>();
+            Set<String> dns6 = new LinkedHashSet<>();
             for (InetAddress dns : links.getDnsServers()) {
-                if (dns instanceof Inet4Address && dns4.equals("-")) {
-                    dns4 = dns.getHostAddress();
-                } else if (dns instanceof Inet6Address && dns.isLinkLocalAddress() && dns6.equals("-")) {
-                    dns6 = dns.getHostAddress().split("%", 2)[0];
+                if (dns instanceof Inet4Address && dns4.size() < MAX_DNS_SERVERS_PER_FAMILY) {
+                    dns4.add(dns.getHostAddress());
+                } else if (dns instanceof Inet6Address && dns.isLinkLocalAddress()
+                        && dns6.size() < MAX_DNS_SERVERS_PER_FAMILY) {
+                    dns6.add(dns.getHostAddress().split("%", 2)[0]);
                 }
             }
-            if (dns4.equals("-") && dns6.equals("-")) {
+            if (dns4.isEmpty() && dns6.isEmpty()) {
                 throw new IOException("Freedom relay requires Wi-Fi IPv4 or link-local IPv6 DNS");
             }
             Collections.addAll(args, global ? "--freedom-global" : "--freedom-relay",
-                    uplink.interfaceName, wifiAddress, dns4, dns6);
+                    uplink.interfaceName, wifiAddress, dns4.isEmpty() ? "-" : String.join(",", dns4),
+                    dns6.isEmpty() ? "-" : String.join(",", dns6));
+            Log.i(TAG, "Selected Freedom relay endpoint: " + resolved.iterator().next()
+                    + "; Wi-Fi DNS candidates IPv4=" + dns4.size() + " IPv6=" + dns6.size());
         }
         args.addAll(resolved);
         RootTunnel result = new RootTunnel();
@@ -361,8 +404,7 @@ final class RootTunnel implements AutoCloseable {
                 } catch (IOException e) {
                     Log.d(TAG, "Helper output closed", e);
                 } finally {
-                    Runnable failed = result.failureCallback;
-                    if (failed != null) failed.run();
+                    result.reportHelperFailure();
                 }
             }, "RootTunLog");
             logger.setDaemon(true);
@@ -378,7 +420,7 @@ final class RootTunnel implements AutoCloseable {
                     break;
                 } catch (IOException e) {
                     candidate.close();
-                    if (!proc.isAlive() || SystemClock.elapsedRealtime() >= deadline) {
+                    if (!helperRunning(proc) || SystemClock.elapsedRealtime() >= deadline) {
                         throw new IOException("Root helper did not start; check KernelSU and logcat", e);
                     }
                     SystemClock.sleep(200);
