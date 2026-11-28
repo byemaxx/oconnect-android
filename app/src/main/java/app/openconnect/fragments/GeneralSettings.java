@@ -83,7 +83,6 @@ public class GeneralSettings extends PreferenceFragment
 		configureQuickSettingsPreference();
 		configureUpdatePreferences();
         configureAdvancedSettings();
-        configureCallingSettings();
 
 		mExtapp = new ExternalAppDatabase(getActivity());
 
@@ -117,15 +116,6 @@ public class GeneralSettings extends PreferenceFragment
 		super.onViewCreated(view, savedInstanceState);
 		PreferenceScreenStyler.apply(this);
 	}
-
-    private void configureCallingSettings() {
-        findPreference("calling_settings").setOnPreferenceClickListener(clicked -> {
-            Intent intent = new Intent(getActivity(), FragActivity.class);
-            intent.putExtra(FragActivity.EXTRA_FRAGMENT_NAME, "CallingSettings");
-            startActivity(intent);
-            return true;
-        });
-    }
 
     private void configureAdvancedSettings() {
         Preference preference = findPreference("advanced_general_settings");

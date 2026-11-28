@@ -30,6 +30,7 @@ import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -53,6 +54,7 @@ final class RootTunnel implements AutoCloseable {
     private ParcelFileDescriptor tun;
     private java.lang.Process helper;
     private volatile int freedomStage;
+    String endpointDetails;
     private volatile Runnable failureCallback;
     private volatile boolean helperOutputClosed;
     private final java.util.concurrent.atomic.AtomicBoolean failureReported =
@@ -106,11 +108,13 @@ final class RootTunnel implements AutoCloseable {
         final String interfaceName;
         final boolean freedomRelay;
         final int subId;
-        final String hostname;
+        final List<Endpoint> endpoints;
+        final int slot;
         private ConnectivityManager.NetworkCallback callback;
 
         private Uplink(ConnectivityManager cm, Network network, Network previous,
-                Set<String> targets, String interfaceName, boolean freedomRelay, int subId, String hostname) {
+                Set<String> targets, String interfaceName, boolean freedomRelay, int subId, int slot,
+                List<Endpoint> endpoints) {
             this.cm = cm;
             this.network = network;
             this.previous = previous;
@@ -118,7 +122,8 @@ final class RootTunnel implements AutoCloseable {
             this.interfaceName = interfaceName;
             this.freedomRelay = freedomRelay;
             this.subId = subId;
-            this.hostname = hostname;
+            this.slot = slot;
+            this.endpoints = endpoints;
         }
 
         void verifyAvailable() throws IOException {
@@ -206,7 +211,7 @@ final class RootTunnel implements AutoCloseable {
         return false;
     }
 
-    static synchronized Uplink prepareUplink(Context context, String targets, String targetSlot)
+    static synchronized Uplink prepareUplink(Context context, String targets, String targetSlot, boolean global)
             throws IOException {
         if (Build.VERSION.SDK_INT < 26) {
             throw new IOException("Root ePDG mode requires Android 8 or newer");
@@ -253,26 +258,30 @@ final class RootTunnel implements AutoCloseable {
                 || "auto".equalsIgnoreCase(input);
         Set<String> resolved;
         int subId = -1;
-        String hostname = null;
+        int slot = -1;
+        List<Endpoint> endpoints = new ArrayList<>();
         if (freedomRelay) {
             String endpoint = input.contains("=") ? input.substring(input.indexOf('=') + 1).trim() : input;
             EpdgDiscovery.Target target = EpdgDiscovery.read(context, targetSlot);
             subId = target.subId;
-            hostname = target.home;
+            slot = target.slot;
             if (endpoint.isEmpty() || "auto".equalsIgnoreCase(endpoint)) {
                 resolved = null;
                 IOException failure = null;
                 for (String candidate : target.candidates) {
                     try {
                         resolved = resolveTargets(wifi, candidate);
-                        if (!candidate.matches("[0-9.]+")) hostname = candidate;
-                        break;
+                        endpoints.add(new Endpoint(candidate.matches("[0-9.]+") ? target.home : candidate,
+                                resolved, candidate.equals(target.home) ? "home PLMN" : "carrier config"));
+                        if (!global) break;
                     } catch (IOException e) { failure = e; }
                 }
                 if (resolved == null) throw new IOException("No discovered IPv4 ePDG endpoint could be resolved", failure);
             } else {
                 resolved = resolveTargets(wifi, endpoint);
-                if (EpdgDiscovery.validHost(endpoint) && !endpoint.matches("[0-9.]+")) hostname = endpoint;
+                String hostname = EpdgDiscovery.validHost(endpoint) && !endpoint.matches("[0-9.]+")
+                        ? endpoint : target.home;
+                endpoints.add(new Endpoint(hostname, resolved, "manual"));
             }
         } else {
             // Preserve the legacy direct route-only mode for explicit target lists.
@@ -282,11 +291,33 @@ final class RootTunnel implements AutoCloseable {
         if (!cm.bindProcessToNetwork(wifi)) {
             throw new IOException("Could not bind OConnect to the selected Wi-Fi network");
         }
-        Uplink uplink = new Uplink(cm, wifi, previous, resolved, links.getInterfaceName(), freedomRelay, subId, hostname);
+        Uplink uplink = new Uplink(cm, wifi, previous, resolved, links.getInterfaceName(), freedomRelay, subId, slot, endpoints);
         activeUplink = uplink;
         Log.i(TAG, "Selected physical Wi-Fi: " + uplink.interfaceName
                 + "; default network was " + active + "; targets=" + resolved);
         return uplink;
+    }
+
+    static final class Endpoint {
+        final String hostname;
+        final Set<String> addresses;
+        final String source;
+
+        Endpoint(String hostname, Set<String> addresses, String source) {
+            this.hostname = hostname;
+            this.addresses = addresses;
+            this.source = source;
+        }
+    }
+
+    static Endpoint selectEndpoint(List<Endpoint> endpoints, List<String> includes, List<String> excludes) {
+        for (Endpoint endpoint : endpoints) {
+            String address = Ipv4RoutePolicy.firstAllowed(endpoint.addresses, includes, excludes);
+            if (address != null) {
+                return new Endpoint(endpoint.hostname, Collections.singleton(address), endpoint.source);
+            }
+        }
+        return null;
     }
 
     private static Set<String> resolveTargets(Network wifi, String targets) throws IOException {
@@ -333,22 +364,23 @@ final class RootTunnel implements AutoCloseable {
         }
         // Do not replace server-selected split routes with an unrestricted tunnel.
         Set<String> resolved = uplink.targets;
+        Endpoint endpoint = null;
         if (global) {
-            String endpoint;
             try {
-                endpoint = Ipv4RoutePolicy.firstAllowed(resolved, ip.splitIncludes, ip.splitExcludes);
+                endpoint = selectEndpoint(uplink.endpoints, ip.splitIncludes, ip.splitExcludes);
             } catch (IllegalArgumentException e) {
                 throw new IOException("Cannot validate server routes for Freedom relay", e);
             }
             if (endpoint == null) {
                 throw new IOException("VPN server routes exclude all Freedom endpoint candidates");
             }
-            resolved = Collections.singleton(endpoint);
+            resolved = endpoint.addresses;
         } else if (ip.splitIncludes != null && !ip.splitIncludes.isEmpty()) {
             throw new IOException("Root ePDG mode currently requires a full IPv4 VPN");
         } else if (uplink.freedomRelay) {
             // The Freedom helper maps the DNS answer and IKE relay to one endpoint per session.
-            resolved = Collections.singleton(resolved.iterator().next());
+            endpoint = uplink.endpoints.get(0);
+            resolved = Collections.singleton(endpoint.addresses.iterator().next());
         }
         InetAddress vpnAddress = InetAddress.getByName(ip.addr);
         if (!(vpnAddress instanceof Inet4Address)) {
@@ -388,12 +420,16 @@ final class RootTunnel implements AutoCloseable {
             }
             Collections.addAll(args, global ? "--epdg-global" : "--epdg-relay",
                     uplink.interfaceName, wifiAddress, dns4.isEmpty() ? "-" : String.join(",", dns4),
-                    dns6.isEmpty() ? "-" : String.join(",", dns6), uplink.hostname.toLowerCase(Locale.ROOT));
+                    dns6.isEmpty() ? "-" : String.join(",", dns6), endpoint.hostname.toLowerCase(Locale.ROOT));
             Log.i(TAG, "Selected Freedom relay endpoint: " + resolved.iterator().next()
                     + "; Wi-Fi DNS candidates IPv4=" + dns4.size() + " IPv6=" + dns6.size());
         }
         args.addAll(resolved);
         RootTunnel result = new RootTunnel();
+        if (endpoint != null) {
+            result.endpointDetails = "SIM " + (uplink.slot + 1) + " · " + endpoint.hostname + " · "
+                    + resolved.iterator().next() + " (" + endpoint.source + ")";
+        }
         boolean success = false;
         try {
             result.helper = RootAccess.start(args.toArray(new String[0]));

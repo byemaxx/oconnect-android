@@ -76,10 +76,20 @@ public class ConnectionDetailsFragment extends Fragment {
 			service.checkFreedomIms();
 			int[] relay = {0, R.string.freedom_relay_ready, R.string.freedom_relay_dns,
 					R.string.freedom_relay_ike, R.string.freedom_relay_esp};
-			int ims = service.getFreedomIms();
-			writeText(R.id.details_freedom, getString(relay[stage]) + "\n" + getString(
-					ims == 2 ? R.string.freedom_ims_wifi : ims == 1
-							? R.string.freedom_ims_waiting : R.string.freedom_ims_unknown));
+			int[] ims = {R.string.freedom_ims_unknown, R.string.freedom_ims_waiting,
+					R.string.freedom_ims_wifi, R.string.freedom_ims_sub_inactive,
+					R.string.freedom_ims_timeout, R.string.freedom_ims_interface_error};
+			String text = getString(relay[stage]);
+			String endpoint = service.getFreedomEndpointDetails();
+			if (endpoint != null) text += "\n" + endpoint;
+			text += "\n" + getString(ims[service.getFreedomIms()]);
+			long checkedAt = service.getFreedomImsCheckedAt();
+			if (checkedAt != 0) {
+				String time = android.text.format.DateFormat.getTimeFormat(mView.getContext())
+						.format(new java.util.Date(checkedAt));
+				text += "\n" + getString(R.string.freedom_ims_checked_at, time);
+			}
+			writeText(R.id.details_freedom, text);
 		}
 
 		if (connected && service.startTime != null) {

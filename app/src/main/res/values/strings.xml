@@ -332,7 +332,17 @@
     <string name="epdg_relay_enable">Enable ePDG relay for this profile</string>
     <string name="root_epdg_targets_summary">Leave blank for automatic discovery. Use epdg=hostname or epdg=IPv4 for a relay override. Bare addresses retain legacy direct routing.</string>
     <string name="vo_wifi_settings_title">Wi-Fi Calling</string>
-    <string name="vo_wifi_settings_summary">Connection mode, ePDG targets, and Cross-SIM diagnostics</string>
+    <string name="wfc_restart_title">Re-register Wi-Fi Calling</string>
+    <string name="wfc_restart_summary">Temporarily restart Wi-Fi Calling on the target SIM (requires root).</string>
+    <string name="wfc_restart_confirm">Temporarily interrupt Wi-Fi Calling on the selected SIM and request registration again?</string>
+    <string name="wfc_restart_running">Requesting Wi-Fi Calling registration…</string>
+    <string name="wfc_restart_requested">SIM %1$d: registration requested. Check connection details for status.</string>
+    <string name="wfc_restart_busy">A call or emergency callback is active. Try again later.</string>
+    <string name="wfc_restart_disabled">Enable Wi-Fi Calling in system settings for the target SIM first.</string>
+    <string name="wfc_restart_failed">Could not request Wi-Fi Calling registration.</string>
+    <string name="wfc_restart_restore_failed">Wi-Fi Calling could not be restored. Turn it off and on in system settings.</string>
+    <string name="wfc_restart_timeout">The request is still pending. Check the system Wi-Fi Calling setting before retrying.</string>
+    <string name="wfc_restart_unsupported">Requires Android 12 or newer.</string>
     <string name="root_epdg_category">Root ePDG (experimental)</string>
     <string name="root_tun_module_unavailable">No legacy tun.ko file found. Modern kernels may have TUN built in. This does not prevent Root ePDG mode.</string>
     <string name="root_check_title">Test root access</string>
@@ -350,5 +360,9 @@
     <string name="freedom_relay_esp">ePDG ESP traffic confirmed in both directions</string>
     <string name="freedom_ims_wifi">Target SIM Wi-Fi Calling available</string>
     <string name="freedom_ims_waiting">Target SIM Wi-Fi Calling not available yet</string>
+    <string name="freedom_ims_sub_inactive">Target SIM subscription is no longer active</string>
+    <string name="freedom_ims_timeout">Wi-Fi Calling status query timed out</string>
+    <string name="freedom_ims_interface_error">Unable to query the system Wi-Fi Calling status</string>
+    <string name="freedom_ims_checked_at">Last Wi-Fi Calling check %1$s</string>
     <string name="freedom_ims_unknown">Target SIM Wi-Fi Calling status unavailable</string>
 </resources>

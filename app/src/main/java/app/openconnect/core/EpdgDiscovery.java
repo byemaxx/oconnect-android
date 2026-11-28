@@ -21,16 +21,73 @@ public final class EpdgDiscovery {
 
     static final class Target {
         final int subId;
+        final int slot;
         final String home;
         final Set<String> candidates = new LinkedHashSet<>();
-        Target(int subId, String plmn, String configured) {
+        Target(int subId, int slot, String plmn, String configured) {
             this.subId = subId;
+            this.slot = slot;
             home = hostname(plmn);
             for (String value : configured.split("[,\\s]+")) {
                 if (validHost(value)) candidates.add(value);
             }
             candidates.add(home);
         }
+    }
+
+    static final class Subscription {
+        final int subId;
+        final Integer slot;
+        final String plmn;
+        final Boolean wifiCallingEnabled;
+
+        Subscription(int subId, Integer slot, String plmn, Boolean wifiCallingEnabled) {
+            this.subId = subId;
+            this.slot = slot;
+            this.plmn = plmn;
+            this.wifiCallingEnabled = wifiCallingEnabled;
+        }
+
+        boolean hasTargetDetails() {
+            return slot != null && slot >= 0 && plmn != null && plmn.matches("[0-9]{5,6}");
+        }
+    }
+
+    static Subscription select(List<Subscription> active, String slot) throws IOException {
+        final String unavailable = "Target SIM information unavailable. Check root access and Target SIM.";
+        if (active == null) throw new IOException(unavailable);
+        if (!"auto".equals(slot)) {
+            Subscription selected = null;
+            boolean unknownSlot = false;
+            for (Subscription sim : active) {
+                if (sim.slot == null || sim.slot < 0) {
+                    unknownSlot = true;
+                } else if (Integer.toString(sim.slot).equals(slot)) {
+                    if (selected != null) throw new IOException("Multiple active subscriptions match Target SIM.");
+                    selected = sim;
+                }
+            }
+            if (selected != null && selected.hasTargetDetails()) return selected;
+            if (selected != null || unknownSlot) throw new IOException(unavailable);
+            throw new IOException("Selected Target SIM slot is inactive.");
+        }
+        if (active.size() == 1) {
+            Subscription sim = active.get(0);
+            if (sim.hasTargetDetails()) return sim;
+            throw new IOException(unavailable);
+        }
+        Subscription selected = null;
+        int possible = 0;
+        for (Subscription sim : active) {
+            if (Boolean.FALSE.equals(sim.wifiCallingEnabled)) continue;
+            possible++;
+            if (Boolean.TRUE.equals(sim.wifiCallingEnabled) && sim.hasTargetDetails()) selected = sim;
+        }
+        if (possible == 1 && selected != null) return selected;
+        if (possible > 1)
+            throw new IOException("Multiple eligible or unknown SIMs. Choose Target SIM in Wi-Fi Calling settings.");
+        if (possible == 1) throw new IOException(unavailable);
+        throw new IOException("No eligible active target SIM found. Check Target SIM.");
     }
 
     static boolean validHost(String value) {
@@ -60,15 +117,16 @@ public final class EpdgDiscovery {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     if (line.startsWith("EPDG_TARGET ")) {
-                        String[] fields = line.substring(12).split(" ", 3);
-                        if (fields.length >= 2 && process.exitValue() == 0)
-                            return new Target(Integer.parseInt(fields[0]), fields[1], fields.length == 3 ? fields[2] : "");
+                        String[] fields = line.substring("EPDG_TARGET ".length()).split(" ", 4);
+                        if (fields.length >= 3 && process.exitValue() == 0)
+                            return new Target(Integer.parseInt(fields[0]), Integer.parseInt(fields[1]),
+                                    fields[2], fields.length == 4 ? fields[3] : "");
                     }
-                    if (line.equals("EPDG_AMBIGUOUS"))
-                        throw new IOException("Multiple eligible or unknown SIMs. Choose Target SIM in Wi-Fi Calling settings.");
+                    if (line.startsWith("EPDG_ERROR "))
+                        throw new IOException(line.substring("EPDG_ERROR ".length()));
                 }
             }
-            throw new IOException("No eligible active target SIM found. Check root access and Target SIM.");
+            throw new IOException("Target SIM information unavailable. Check root access and Target SIM.");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("ePDG discovery interrupted", e);
@@ -93,37 +151,39 @@ public final class EpdgDiscovery {
             Object subs = FreedomImsProbe.service("isub", SUB);
             int[] ids = (int[]) query(SUB, subs, "getActiveSubIdList", new Class<?>[]{boolean.class}, false);
             Object phone = FreedomImsProbe.service("phone", PHONE);
-            Object config = FreedomImsProbe.service("carrier_config", CONFIG);
-            List<String> all = new ArrayList<>(), eligible = new ArrayList<>();
-            int unknown = 0;
-            for (int id : ids) {
-                Object slotValue = query(SUB, subs, "getSlotIndex", new Class<?>[]{int.class}, id);
-                if (!(slotValue instanceof Integer)) continue;
-                int slot = (int) slotValue;
-                if (slot < 0 || slot >= operators.length || !operators[slot].matches("[0-9]{5,6}")) continue;
-                if (!"auto".equals(args[1]) && !Integer.toString(slot).equals(args[1])) continue;
-                Object raw = query(CONFIG, config, "getConfigForSubIdWithFeature",
-                        new Class<?>[]{int.class, String.class, String.class}, id, args[0], null);
-                PersistableBundle bundle = raw instanceof PersistableBundle ? (PersistableBundle) raw : null;
-                String configured = "";
-                if (bundle != null) {
-                    Object roaming = query(PHONE, phone, "getServiceStateForSlot",
-                            new Class<?>[]{int.class, boolean.class, boolean.class, String.class, String.class},
-                            slot, true, true, args[0], null);
-                    boolean isRoaming = Boolean.TRUE.equals(query("android.telephony.ServiceState", roaming,
-                            "getVoiceRoaming", new Class<?>[0]));
-                    if (isRoaming) configured = bundle.getString("iwlan.epdg_static_address_roaming_string", "");
-                    if (configured.isEmpty()) configured = bundle.getString("iwlan.epdg_static_address_string", "");
+            List<Subscription> active = null;
+            if (ids != null) {
+                active = new ArrayList<>(ids.length);
+                for (int id : ids) {
+                    Object slotValue = query(SUB, subs, "getSlotIndex", new Class<?>[]{int.class}, id);
+                    Integer slot = slotValue instanceof Integer ? (Integer) slotValue : null;
+                    String plmn = slot != null && slot >= 0 && slot < operators.length ? operators[slot] : null;
+                    Object enabled = query(PHONE, phone, "isVoWiFiSettingEnabled", new Class<?>[]{int.class}, id);
+                    if (!(enabled instanceof Boolean)) {
+                        enabled = query(PHONE, phone, "isWifiCallingEnabledByUser", new Class<?>[]{int.class}, id);
+                    }
+                    active.add(new Subscription(id, slot, plmn, enabled instanceof Boolean ? (Boolean) enabled : null));
                 }
-                String item = id + " " + operators[slot] + " " + configured.replaceAll("[\\r\\n]", "");
-                all.add(item);
-                Object enabled = query(PHONE, phone, "isWifiCallingEnabledByUser", new Class<?>[]{int.class}, id);
-                if (Boolean.TRUE.equals(enabled)) eligible.add(item);
-                else if (!(enabled instanceof Boolean)) unknown++;
             }
-            if (all.size() == 1) System.out.println("EPDG_TARGET " + all.get(0));
-            else if (eligible.size() == 1 && unknown == 0) System.out.println("EPDG_TARGET " + eligible.get(0));
-            else if (all.size() > 1) System.out.println("EPDG_AMBIGUOUS");
+            Subscription selected = select(active, args[1]);
+            Object config = FreedomImsProbe.service("carrier_config", CONFIG);
+            Object raw = query(CONFIG, config, "getConfigForSubIdWithFeature",
+                    new Class<?>[]{int.class, String.class, String.class}, selected.subId, args[0], null);
+            String configured = "";
+            if (raw instanceof PersistableBundle) {
+                PersistableBundle bundle = (PersistableBundle) raw;
+                Object roaming = query(PHONE, phone, "getServiceStateForSlot",
+                        new Class<?>[]{int.class, boolean.class, boolean.class, String.class, String.class},
+                        selected.slot, true, true, args[0], null);
+                boolean isRoaming = Boolean.TRUE.equals(query("android.telephony.ServiceState", roaming,
+                        "getVoiceRoaming", new Class<?>[0]));
+                if (isRoaming) configured = bundle.getString("iwlan.epdg_static_address_roaming_string", "");
+                if (configured.isEmpty()) configured = bundle.getString("iwlan.epdg_static_address_string", "");
+            }
+            System.out.println("EPDG_TARGET " + selected.subId + " " + selected.slot + " "
+                    + selected.plmn + " " + configured.replaceAll("[\\r\\n]", ""));
+        } catch (IOException e) {
+            System.out.println("EPDG_ERROR " + e.getMessage());
         } catch (ReflectiveOperationException | RuntimeException ignored) {
             // Fail closed rather than selecting an unrelated SIM.
         }

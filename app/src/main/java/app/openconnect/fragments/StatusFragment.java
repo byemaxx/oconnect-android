@@ -18,6 +18,7 @@ import android.app.AlertDialog;
 import android.app.Fragment;
 import android.content.Intent;
 import android.os.Bundle;
+import android.preference.PreferenceManager;
 import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.TextUtils;
@@ -47,7 +48,6 @@ public class StatusFragment extends Fragment {
 
 	private static final int MENU_CHECK_UPDATES = 1;
 	private static final int MENU_SECURID = 2;
-	private static final int MENU_CALLING = 3;
 
 	private View mView;
 	private VPNConnector mConn;
@@ -68,6 +68,8 @@ public class StatusFragment extends Fragment {
 				view -> handleProfileRow());
 		mView.findViewById(R.id.connection_details_row).setOnClickListener(
 				view -> startFragment("ConnectionDetailsFragment"));
+		mView.findViewById(R.id.dashboard_calling_row).setOnClickListener(
+				view -> startFragment("CallingSettings"));
 		mView.findViewById(R.id.dashboard_settings_row).setOnClickListener(
 				view -> startFragment("GeneralSettings"));
 		mView.findViewById(R.id.dashboard_help_row).setOnClickListener(
@@ -83,6 +85,15 @@ public class StatusFragment extends Fragment {
 		};
 
 		return mView;
+	}
+
+	@Override
+	public void onResume() {
+		super.onResume();
+		boolean wifiCallingOnly = PreferenceManager.getDefaultSharedPreferences(getActivity())
+				.getBoolean("root_epdg_enabled", false);
+		writeText(R.id.dashboard_calling_mode, getString(wifiCallingOnly
+				? R.string.connection_mode_vowifi : R.string.connection_mode_global));
 	}
 
 	@Override
@@ -310,14 +321,9 @@ public class StatusFragment extends Fragment {
 
 	private void showOverflowMenu(View anchor) {
 		PopupMenu popup = new PopupMenu(getActivity(), anchor);
-		popup.getMenu().add(0, MENU_CALLING, 0, R.string.vo_wifi_settings_title);
-		popup.getMenu().add(0, MENU_CHECK_UPDATES, 1, R.string.check_for_updates);
-		popup.getMenu().add(0, MENU_SECURID, 2, R.string.securid_info);
+		popup.getMenu().add(0, MENU_CHECK_UPDATES, 0, R.string.check_for_updates);
+		popup.getMenu().add(0, MENU_SECURID, 1, R.string.securid_info);
 		popup.setOnMenuItemClickListener(item -> {
-			if (item.getItemId() == MENU_CALLING) {
-				startFragment("CallingSettings");
-				return true;
-			}
 			if (item.getItemId() == MENU_CHECK_UPDATES) {
 				GitHubUpdateChecker.checkManually(getActivity());
 				return true;

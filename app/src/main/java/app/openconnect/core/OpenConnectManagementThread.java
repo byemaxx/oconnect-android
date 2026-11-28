@@ -89,6 +89,7 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 	private final String mFreedomEndpoint;
 	private volatile RootTunnel mRootTunnel;
 	private volatile int mFreedomIms;
+	private volatile long mFreedomImsCheckedAt;
 	private long mNextFreedomImsCheck;
 	private RootTunnel.Uplink mRootUplink;
 
@@ -750,7 +751,7 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 				String targets = mFreedomEndpoint.isEmpty()
 						? mAppPrefs.getString(RootTunnel.TARGETS, RootTunnel.DEFAULT_TARGET)
 						: "epdg=" + mFreedomEndpoint;
-				mRootUplink = RootTunnel.prepareUplink(mContext, targets, mAppPrefs.getString(EpdgDiscovery.TARGET_SIM, "auto"));
+				mRootUplink = RootTunnel.prepareUplink(mContext, targets, mAppPrefs.getString(EpdgDiscovery.TARGET_SIM, "auto"), !mRootMode);
 				log("ROOT: selected Wi-Fi " + mRootUplink.interfaceName
 						+ " before authentication");
 				// Root mode always verifies TUN, independent of the legacy switch.
@@ -873,6 +874,15 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 		return getFreedomRelayStage() == 0 ? 0 : mFreedomIms;
 	}
 
+	String getFreedomEndpointDetails() {
+		RootTunnel tunnel = mRootTunnel;
+		return tunnel == null ? null : tunnel.endpointDetails;
+	}
+
+	long getFreedomImsCheckedAt() {
+		return mFreedomImsCheckedAt;
+	}
+
 	void checkFreedomIms() {
 		if (Build.VERSION.SDK_INT < 26 || getFreedomRelayStage() == 0
 				|| android.os.SystemClock.elapsedRealtime() < mNextFreedomImsCheck) return;
@@ -889,19 +899,23 @@ public class OpenConnectManagementThread implements Runnable, OpenVPNManagement 
 					try (java.io.BufferedReader reader = new java.io.BufferedReader(
 							new java.io.InputStreamReader(probe.getInputStream()))) {
 						String value = reader.readLine();
-						mFreedomIms = "IMS_WIFI".equals(value) ? 2 : "IMS_WAITING".equals(value) ? 1 : 0;
+						if ("IMS_WIFI".equals(value)) mFreedomIms = 2;
+						else if ("IMS_WAITING".equals(value)) mFreedomIms = 1;
+						else if ("IMS_SUB_INACTIVE".equals(value)) mFreedomIms = 3;
+						else mFreedomIms = 5;
 					}
 				} else {
-					mFreedomIms = 0;
+					mFreedomIms = 4;
 				}
 			} catch (IOException e) {
-				mFreedomIms = 0;
+				mFreedomIms = 5;
 			} catch (InterruptedException e) {
 				mFreedomIms = 0;
 				Thread.currentThread().interrupt();
 			} finally {
 				if (probe != null) probe.destroy();
 			}
+			mFreedomImsCheckedAt = System.currentTimeMillis();
 			mOpenVPNService.updateFreedomDetails(this);
 		}, "FreedomImsStatus").start();
 	}

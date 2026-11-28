@@ -274,6 +274,68 @@
                 android:background="@color/dashboard_surface_outline" />
 
             <LinearLayout
+                android:id="@+id/dashboard_calling_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="62dp"
+                android:background="?android:attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="24dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_dns_24" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="24dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="@string/vo_wifi_settings_title"
+                        android:textColor="@color/dashboard_primary_text"
+                        android:textSize="17sp" />
+
+                    <TextView
+                        android:id="@+id/dashboard_calling_mode"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/dashboard_secondary_text"
+                        android:textSize="13sp"
+                        tools:text="@string/connection_mode_global" />
+
+                </LinearLayout>
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_chevron_right_24"
+                    app:tint="@color/dashboard_secondary_text" />
+
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginStart="18dp"
+                android:layout_marginEnd="18dp"
+                android:background="@color/dashboard_surface_outline" />
+
+            <LinearLayout
                 android:id="@+id/dashboard_settings_row"
                 android:layout_width="match_parent"
                 android:layout_height="62dp"

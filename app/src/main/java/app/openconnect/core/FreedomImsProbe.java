@@ -29,9 +29,9 @@ public final class FreedomImsProbe {
                 System.out.println(available ? "IMS_WIFI" : "IMS_WAITING");
                 return;
             }
-            System.out.println("IMS_UNKNOWN");
+            System.out.println("IMS_SUB_INACTIVE");
         } catch (ReflectiveOperationException | RuntimeException e) {
-            System.out.println("IMS_UNKNOWN");
+            System.out.println("IMS_INTERFACE_ERROR");
         }
     }
 }

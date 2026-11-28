@@ -8,13 +8,13 @@ package app.openconnect.fragments;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.widget.Toast;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.os.Bundle;
 import android.preference.ListPreference;
 import android.preference.Preference;
@@ -23,8 +23,9 @@ import android.view.View;
 
 import app.openconnect.PreferenceScreenStyler;
 import app.openconnect.R;
-import app.openconnect.core.CrossSimDiagnostics;
+import app.openconnect.core.EpdgDiscovery;
 import app.openconnect.core.RootAccess;
+import app.openconnect.core.WifiCallingRestart;
 
 public class CallingSettings extends PreferenceFragment {
 
@@ -72,12 +73,20 @@ public class CallingSettings extends PreferenceFragment {
             });
         }
 
-        Preference crossSim = findPreference("cross_sim_diagnostics");
-        crossSim.setOnPreferenceClickListener(preference -> {
-            readCrossSimDiagnostics(preference);
+        Preference restart = findPreference("wifi_calling_restart");
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            restart.setEnabled(false);
+            restart.setSummary(R.string.wfc_restart_unsupported);
+        }
+        restart.setOnPreferenceClickListener(preference -> {
+            new AlertDialog.Builder(getActivity())
+                    .setTitle(R.string.wfc_restart_title)
+                    .setMessage(R.string.wfc_restart_confirm)
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton(android.R.string.ok, (dialog, which) -> restartCalling(preference))
+                    .show();
             return true;
         });
-
     }
 
     @Override
@@ -86,83 +95,30 @@ public class CallingSettings extends PreferenceFragment {
         PreferenceScreenStyler.apply(this);
     }
 
-    private void readCrossSimDiagnostics(Preference preference) {
+    private void restartCalling(Preference preference) {
         Activity activity = getActivity();
         if (activity == null) return;
         Context context = activity.getApplicationContext();
+        String slot = getPreferenceScreen().getSharedPreferences().getString(EpdgDiscovery.TARGET_SIM, "auto");
         preference.setEnabled(false);
-        preference.setSummary(R.string.cross_sim_reading);
+        preference.setSummary(R.string.wfc_restart_running);
         new Thread(() -> {
-            Map<String, String> fields = null;
+            String message;
             try {
-                fields = CrossSimDiagnostics.read(context);
+                message = WifiCallingRestart.request(context, slot);
+            } catch (IOException e) {
+                message = context.getString(R.string.wfc_restart_failed) + " " + e.getMessage();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-            } catch (IOException ignored) {
-                // Shell output can contain unrelated system details. Keep it out of the UI.
+                message = context.getString(R.string.wfc_restart_timeout);
             }
-            final Map<String, String> result = fields;
+            String result = message;
             activity.runOnUiThread(() -> {
                 preference.setEnabled(true);
-                preference.setSummary(R.string.cross_sim_diagnostics_summary);
-                if (!isAdded() || getActivity() != activity || activity.isFinishing()) return;
-                if (result == null) {
-                    Toast.makeText(activity, R.string.cross_sim_read_failed, Toast.LENGTH_LONG).show();
-                    return;
-                }
-                chooseCrossSimTarget(activity, result);
+                if (!isAdded() || getActivity() != activity) return;
+                preference.setSummary(result);
             });
-        }, "CrossSimDiagnostics").start();
-    }
-
-    private void chooseCrossSimTarget(Activity activity, Map<String, String> fields) {
-        List<String> subscriptions = new ArrayList<>();
-        List<String> labels = new ArrayList<>();
-        for (String key : fields.keySet()) {
-            if (key.startsWith("slot.")) {
-                String id = key.substring("slot.".length());
-                subscriptions.add(id);
-                labels.add(subscriptionLabel(fields, id));
-            }
-        }
-        if (subscriptions.isEmpty()) {
-            Toast.makeText(activity, R.string.cross_sim_no_subscriptions, Toast.LENGTH_LONG).show();
-            return;
-        }
-        new AlertDialog.Builder(activity)
-                .setTitle(R.string.cross_sim_target)
-                .setItems(labels.toArray(new String[0]), (dialog, which) ->
-                        showCrossSimSnapshot(activity, fields, subscriptions.get(which)))
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
-    }
-
-    private String subscriptionLabel(Map<String, String> fields, String id) {
-        if (!id.matches("[0-9]+")) return getString(R.string.cross_sim_unknown);
-        return getString(R.string.cross_sim_subscription, fields.getOrDefault("slot." + id,
-                getString(R.string.cross_sim_unknown)), id);
-    }
-
-    private void showCrossSimSnapshot(Activity activity, Map<String, String> fields, String id) {
-        String unknown = getString(R.string.cross_sim_unknown);
-        String active = fields.getOrDefault("active", unknown);
-        String message = getString(R.string.cross_sim_snapshot,
-                subscriptionLabel(fields, id),
-                subscriptionLabel(fields, fields.getOrDefault("default", unknown)),
-                subscriptionLabel(fields, active),
-                fields.getOrDefault("roaming." + active, unknown),
-                fields.getOrDefault("dataRoamingEnabled", unknown),
-                fields.getOrDefault("enabled." + id, unknown),
-                fields.getOrDefault("eligible." + id, unknown),
-                fields.getOrDefault("registered." + id, unknown),
-                fields.getOrDefault("tech." + id, unknown),
-                fields.getOrDefault("voice." + id, unknown),
-                fields.getOrDefault("preferred." + id, unknown), unknown);
-        new AlertDialog.Builder(activity)
-                .setTitle(R.string.cross_sim_diagnostics_title)
-                .setMessage(message)
-                .setPositiveButton(android.R.string.ok, null)
-                .show();
+        }, "WifiCallingRestart").start();
     }
 
     private void checkRootAccess() {

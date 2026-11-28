@@ -570,6 +570,14 @@ public class OpenVpnService extends VpnService {
 		return mVPN == null ? 0 : mVPN.getFreedomIms();
 	}
 
+	public synchronized String getFreedomEndpointDetails() {
+		return mVPN == null ? null : mVPN.getFreedomEndpointDetails();
+	}
+
+	public synchronized long getFreedomImsCheckedAt() {
+		return mVPN == null ? 0 : mVPN.getFreedomImsCheckedAt();
+	}
+
 	public synchronized void checkFreedomIms() {
 		if (mVPN != null) mVPN.checkFreedomIms();
 	}
